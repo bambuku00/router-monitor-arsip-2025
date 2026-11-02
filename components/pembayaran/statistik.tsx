@@ -1,4 +1,9 @@
+import { useBillingAllowedMonths } from "@/components/billing-period-provider";
 import { SelectMonth } from "@/components/input";
+import {
+  clampBillingMonth,
+  defaultBillingMonth,
+} from "@/lib/billing-period-policy";
 import { clampPetugasBulan, petugasVisibleMonths } from "@/lib/petugas-bulan";
 import { KomisiPetugasRingkas } from "@/components/pembayaran/komisi-petugas";
 import { cn } from "@/lib/utils";
@@ -341,21 +346,26 @@ export default function Statistik({
   const [mutating, setMutating] = useState(false);
   const [showPendapatan, setShowPendapatan] = useState(false);
 
-  const visibleMonths = useMemo(
-    () => (collectorView ? petugasVisibleMonths() : null),
-    [collectorView]
-  );
+  const billingAllowed = useBillingAllowedMonths();
+  const visibleMonths = useMemo(() => {
+    if (collectorView) return petugasVisibleMonths();
+    if (billingAllowed?.length) return billingAllowed;
+    return null;
+  }, [collectorView, billingAllowed]);
   const initialized = useRef<boolean>(false);
   useEffect(() => {
     if (!initialized.current) {
-      const date = new Date();
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      setBulan(`${year}-${month}`);
+      setBulan(defaultBillingMonth(billingAllowed));
       initialized.current = true;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
   }, []);
+
+  useEffect(() => {
+    if (!billingAllowed?.length || !bulan) return;
+    const next = clampBillingMonth(bulan, billingAllowed);
+    if (next !== bulan) setBulan(next);
+  }, [billingAllowed, bulan, setBulan]);
 
   useEffect(() => {
     if (!collectorView || bulan.length === 0) return;

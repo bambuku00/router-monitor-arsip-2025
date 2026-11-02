@@ -306,6 +306,11 @@ export async function PUT(
       data.ppnEnabled !== undefined
         ? { ppnEnabled: data.ppnEnabled !== false }
         : {}),
+      ...(user.role === "Superadmin" &&
+      existing.role === "Superadmin" &&
+      data.billingYearRestrict !== undefined
+        ? { billingYearRestrict: data.billingYearRestrict }
+        : {}),
       ...(data.role ? { role: data.role } : {}),
       ...(hasRole(user, "Superadmin") && data.parentId
         ? { parentId: data.parentId }

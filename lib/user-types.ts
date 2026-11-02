@@ -94,6 +94,7 @@ const UserBaseSchema = UserOptionalDefaultsSchema.omit({
     ownedByIsp: z.boolean().optional(),
     revenueShareEnabled: z.boolean().optional(),
     ppnEnabled: z.boolean().optional(),
+    billingYear2025Only: z.boolean().optional(),
   })
 );
 

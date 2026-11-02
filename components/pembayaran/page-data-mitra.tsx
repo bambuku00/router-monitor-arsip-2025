@@ -20,6 +20,11 @@ import TooltipTotalMitra from "./tooltip-total-mitra";
 import { FaFileInvoiceDollar } from "react-icons/fa6";
 import { useRouter } from "next/navigation";
 import { Button } from "../button";
+import { useBillingAllowedMonths } from "@/components/billing-period-provider";
+import {
+  clampBillingMonth,
+  defaultBillingMonth,
+} from "@/lib/billing-period-policy";
 import DialogGenerate from "../header/dialog-generate";
 import { triggerGeneratePayments } from "@/lib/server-actions/payment";
 
@@ -125,6 +130,7 @@ export default function PageData() {
 
   const [user, setUser] = useState<Rekapan[]>([]);
   const [ppnEnabled, setPpnEnabled] = useState(true);
+  const billingAllowed = useBillingAllowedMonths();
   const [mutating, setMutating] = useState<boolean>(true);
   const loadData = useCallback(async (signal?: AbortSignal) => {
     setMutating(true);
@@ -191,14 +197,17 @@ export default function PageData() {
   const initialized = useRef<boolean>(false);
   useEffect(() => {
     if (!initialized.current) {
-      const date = new Date();
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      setBulan(`${year}-${month}`);
+      setBulan(defaultBillingMonth(billingAllowed));
       initialized.current = true;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
   }, []);
+
+  useEffect(() => {
+    if (!billingAllowed?.length || !bulan) return;
+    const next = clampBillingMonth(bulan, billingAllowed);
+    if (next !== bulan) setBulan(next);
+  }, [billingAllowed, bulan]);
 
   const handleSearch = useCallback((val: string) => {
     setPage(1);
@@ -256,9 +265,12 @@ export default function PageData() {
             type="month"
             className="sm:w-min w-full"
             value={bulan}
+            min={billingAllowed?.[0]}
+            max={billingAllowed?.[billingAllowed.length - 1]}
             onChange={(e) => {
               setPage(1);
-              setBulan(e.target.value);
+              const next = clampBillingMonth(e.target.value, billingAllowed);
+              setBulan(next);
             }}
           />
           <Button

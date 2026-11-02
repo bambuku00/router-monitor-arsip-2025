@@ -25,6 +25,7 @@ export default async function Users() {
     omset: true,
     ppn: true,
     ppnEnabled: true,
+    billingYearRestrict: true,
     disabled: true,
     verified: true,
     created: true,

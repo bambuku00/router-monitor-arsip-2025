@@ -5,6 +5,8 @@ import { getOwnedResourcesUserId } from "@/lib/rbac";
 import { canAccessPathname } from "@/lib/route-access";
 import { countPortalTiketBaruForStaff } from "@/lib/portal-tiket";
 import { hasStaffMenuAccess } from "@/lib/staff-menu-access";
+import { BillingPeriodProvider } from "@/components/billing-period-provider";
+import { getBillingPeriodPolicy } from "@/lib/billing-period-policy";
 import { cn } from "@/lib/utils";
 import prisma from "@/lib/prisma";
 import { Router } from "@prisma/client";
@@ -69,6 +71,9 @@ export default async function HomeLayout({
     tiketBaru = await countPortalTiketBaruForStaff(user);
   }
 
+  const billingPeriod =
+    session && user ? await getBillingPeriodPolicy() : { allowedMonths: null };
+
   if (isCetakPage) {
     return (
       <main
@@ -83,10 +88,12 @@ export default async function HomeLayout({
   }
 
   return (
-    <NavLayoutProvider>
-      <AppShell routers={routers} session={sessionData} tiketBaru={tiketBaru}>
-        {children}
-      </AppShell>
-    </NavLayoutProvider>
+    <BillingPeriodProvider allowedMonths={billingPeriod.allowedMonths}>
+      <NavLayoutProvider>
+        <AppShell routers={routers} session={sessionData} tiketBaru={tiketBaru}>
+          {children}
+        </AppShell>
+      </NavLayoutProvider>
+    </BillingPeriodProvider>
   );
 }

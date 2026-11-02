@@ -143,6 +143,7 @@ export default function DialogData({
       ownedByIsp: false,
       revenueShareEnabled: true,
       ppnEnabled: true,
+      billingYear2025Only: false,
     },
   });
 
@@ -177,6 +178,7 @@ export default function DialogData({
           ownedByIsp: false,
           revenueShareEnabled: true,
           ppnEnabled: true,
+          billingYear2025Only: false,
         });
         return;
       }
@@ -206,6 +208,7 @@ export default function DialogData({
         ownedByIsp: false,
         revenueShareEnabled: true,
         ppnEnabled: true,
+        billingYear2025Only: false,
       });
       return;
     }
@@ -232,6 +235,9 @@ export default function DialogData({
       omset: val.omset,
       ppn: val.ppn,
       ppnEnabled: (val as { ppnEnabled?: boolean }).ppnEnabled !== false,
+      billingYear2025Only:
+        (val as { billingYearRestrict?: number | null }).billingYearRestrict ===
+        2025,
       revenueBasis: rawBasis === "PAID" ? "PAID" : "INVOICE",
       billingStartMode,
       billingStartDate: bd
@@ -445,6 +451,7 @@ export default function DialogData({
         mitraRole === "Superadmin"
       ) {
         payload.ppnEnabled = data.ppnEnabled !== false;
+        payload.billingYearRestrict = data.billingYear2025Only ? 2025 : null;
       }
 
       if (isMitraAdmin) {
@@ -773,6 +780,21 @@ export default function DialogData({
                             Nonaktifkan untuk laporan arsip tanpa PPN: menu dan
                             kolom PPN disembunyikan, perhitungan tagihan memakai
                             DPP saja.
+                          </p>
+                          <label className="flex items-center gap-2 cursor-pointer text-sm mt-2">
+                            <input
+                              type="checkbox"
+                              className="rounded border-slate-300"
+                              checked={watch("billingYear2025Only") === true}
+                              onChange={(e) =>
+                                setValue("billingYear2025Only", e.target.checked)
+                              }
+                            />
+                            <span>Tampilkan tahun 2025 saja</span>
+                          </label>
+                          <p className="text-xs text-slate-500 dark:text-theme-fg-muted leading-snug">
+                            Jika aktif, pemilihan bulan/tahun di pembayaran dan
+                            rekap mitra hanya Januari–Desember 2025.
                           </p>
                         </Field>
                       </Transition>

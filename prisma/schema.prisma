@@ -54,6 +54,8 @@ model User {
   ppn              Float?
   /// Superadmin: false = PPN dimatikan untuk seluruh perhitungan & tampilan pembayaran.
   ppnEnabled       Boolean           @default(true) @map("ppn_enabled")
+  /// Superadmin: batasi pemilihan periode tagihan ke satu tahun (mis. 2025 untuk arsip).
+  billingYearRestrict Int?           @map("billing_year_restrict")
   parentId         Int?
   nomor            String?
   alamat           String?
