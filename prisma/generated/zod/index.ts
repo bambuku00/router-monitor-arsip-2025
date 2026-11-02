@@ -57,7 +57,7 @@ export type InputJsonValueType = z.infer<typeof InputJsonValueSchema>;
 
 export const TransactionIsolationLevelSchema = z.enum(['ReadUncommitted','ReadCommitted','RepeatableRead','Serializable']);
 
-export const UserScalarFieldEnumSchema = z.enum(['id','nama','user','password','identitas','file_identitas','no_identitas','file_npwp','npwp','omset','ppn','parentId','nomor','alamat','role','staffMenuKeys','staffAllowBankPayment','staffAllowIsolir','staffAllowCancelPayment','staffAllowBerhenti','disabled','verified','created','updated','billingStartMode','billingStartDate','revenueBasis','billingGenerateDay','freeCustomerLimit','pppPackageChangeLimit','pppAutoFillEnabled','portalPelangganEnabled','portalSlug','portalPinHash','portalWaCs','ownedByIsp','revenueShareEnabled']);
+export const UserScalarFieldEnumSchema = z.enum(['id','nama','user','password','identitas','file_identitas','no_identitas','file_npwp','npwp','omset','ppn','ppnEnabled','parentId','nomor','alamat','role','staffMenuKeys','staffAllowBankPayment','staffAllowIsolir','staffAllowCancelPayment','staffAllowBerhenti','disabled','verified','created','updated','billingStartMode','billingStartDate','revenueBasis','billingGenerateDay','freeCustomerLimit','pppPackageChangeLimit','pppAutoFillEnabled','portalPelangganEnabled','portalSlug','portalPinHash','portalWaCs','ownedByIsp','revenueShareEnabled']);
 
 export const PortalBersamaScalarFieldEnumSchema = z.enum(['id','nama','slug','enabled','kontakMode','pinHash','waCs','created','updated']);
 
@@ -99,7 +99,7 @@ export const BankScalarFieldEnumSchema = z.enum(['id','bank','norek','nama','hid
 
 export const TagihanDihapusScalarFieldEnumSchema = z.enum(['id','pelangganId','period','created']);
 
-export const PembayaranScalarFieldEnumSchema = z.enum(['id','noInvoice','inputterId','pelangganId','paketId','jatuh_tempo','total','bankId','metode','nonaktif','status','created','updated']);
+export const PembayaranScalarFieldEnumSchema = z.enum(['id','noInvoice','inputterId','pelangganId','paketId','jatuh_tempo','total','bankId','metode','nonaktif','bayarSekaligus','status','created','updated']);
 
 export const LogBayarScalarFieldEnumSchema = z.enum(['id','pembayaranId','total','metode','status','inputterId','created']);
 
@@ -137,11 +137,13 @@ export const BillingGenerateLogScalarFieldEnumSchema = z.enum(['id','userId','pe
 
 export const AuditLogScalarFieldEnumSchema = z.enum(['id','action','outcome','userId','username','ip','userAgent','endpoint','reason','meta','created']);
 
-export const PenagihScalarFieldEnumSchema = z.enum(['id','ownerUserId','userId','nama','nomor','aktif','created','updated']);
+export const PenagihScalarFieldEnumSchema = z.enum(['id','ownerUserId','userId','nama','nomor','aktif','komisiNominal','created','updated']);
 
 export const PenagihPenugasanScalarFieldEnumSchema = z.enum(['pelangganId','penagihId','ownerUserId','updated']);
 
 export const PenagihPenugasanLogScalarFieldEnumSchema = z.enum(['id','pelangganId','ownerUserId','dariPenagihId','dariNama','kePenagihId','keNama','actorUserId','created']);
+
+export const KomisiPetugasEntriScalarFieldEnumSchema = z.enum(['id','ownerUserId','penagihId','actorUserId','pelangganId','pembayaranId','logBayarId','reversesId','nominal','created']);
 
 export const SortOrderSchema = z.enum(['asc','desc']);
 
@@ -262,6 +264,10 @@ export const UserSchema = z.object({
   npwp: z.string().nullish(),
   omset: z.number().int().nullish(),
   ppn: z.number().nullish(),
+  /**
+   * Superadmin: false = PPN dimatikan untuk seluruh perhitungan & tampilan pembayaran.
+   */
+  ppnEnabled: z.boolean(),
   parentId: z.number().int().nullish(),
   nomor: z.string().nullish(),
   alamat: z.string().nullish(),
@@ -350,6 +356,10 @@ export const UserOptionalDefaultsSchema = UserSchema.merge(z.object({
    */
   revenueBasis: RevenueBasisSchema.optional(),
   id: z.number().int().optional(),
+  /**
+   * Superadmin: false = PPN dimatikan untuk seluruh perhitungan & tampilan pembayaran.
+   */
+  ppnEnabled: z.boolean().optional(),
   /**
    * Teknisi/Keuangan: false = hanya boleh catat pembayaran tunai (Cash), tidak via transfer/bank.
    */
@@ -1082,6 +1092,10 @@ export const PembayaranSchema = z.object({
   total: z.number(),
   bankId: z.number().int().nullish(),
   nonaktif: z.boolean(),
+  /**
+   * Jumlah bulan yang dilunasi sekaligus oleh Admin/Keuangan. Null = bayar satu bulan.
+   */
+  bayarSekaligus: z.number().int().nullish(),
   created: z.coerce.date(),
   updated: z.coerce.date(),
 })
@@ -1760,6 +1774,10 @@ export const PenagihSchema = z.object({
   nama: z.string(),
   nomor: z.string().nullish(),
   aktif: z.boolean(),
+  /**
+   * Rupiah utuh yang didapat petugas setiap kali mencatat satu pembayaran. 0 = tanpa komisi.
+   */
+  komisiNominal: z.number().int(),
   created: z.coerce.date(),
   updated: z.coerce.date(),
 })
@@ -1772,6 +1790,10 @@ export type Penagih = z.infer<typeof PenagihSchema>
 export const PenagihOptionalDefaultsSchema = PenagihSchema.merge(z.object({
   id: z.number().int().optional(),
   aktif: z.boolean().optional(),
+  /**
+   * Rupiah utuh yang didapat petugas setiap kali mencatat satu pembayaran. 0 = tanpa komisi.
+   */
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
 }))
@@ -1835,6 +1857,41 @@ export const PenagihPenugasanLogOptionalDefaultsSchema = PenagihPenugasanLogSche
 export type PenagihPenugasanLogOptionalDefaults = z.infer<typeof PenagihPenugasanLogOptionalDefaultsSchema>
 
 /////////////////////////////////////////
+// KOMISI PETUGAS ENTRI SCHEMA
+/////////////////////////////////////////
+
+/**
+ * Ledger komisi petugas. Saldo = jumlah seluruh nominal. Satu log lunas satu kredit. Satu kredit satu pembatalan.
+ */
+export const KomisiPetugasEntriSchema = z.object({
+  id: z.number().int(),
+  ownerUserId: z.number().int(),
+  penagihId: z.number().int(),
+  actorUserId: z.number().int(),
+  pelangganId: z.number().int(),
+  pembayaranId: z.number().int(),
+  logBayarId: z.number().int().nullish(),
+  reversesId: z.number().int().nullish(),
+  /**
+   * Positif saat komisi masuk, negatif saat dibatalkan. Nilai absolut adalah snapshot tarif.
+   */
+  nominal: z.number().int(),
+  created: z.coerce.date(),
+})
+
+export type KomisiPetugasEntri = z.infer<typeof KomisiPetugasEntriSchema>
+
+// KOMISI PETUGAS ENTRI OPTIONAL DEFAULTS SCHEMA
+//------------------------------------------------------
+
+export const KomisiPetugasEntriOptionalDefaultsSchema = KomisiPetugasEntriSchema.merge(z.object({
+  id: z.number().int().optional(),
+  created: z.coerce.date().optional(),
+}))
+
+export type KomisiPetugasEntriOptionalDefaults = z.infer<typeof KomisiPetugasEntriOptionalDefaultsSchema>
+
+/////////////////////////////////////////
 // SELECT & INCLUDE
 /////////////////////////////////////////
 
@@ -1865,6 +1922,7 @@ export const UserIncludeSchema: z.ZodType<Prisma.UserInclude> = z.object({
   tripayGateway: z.union([z.boolean(),z.lazy(() => TripayGatewayArgsSchema)]).optional(),
   penagih: z.union([z.boolean(),z.lazy(() => PenagihFindManyArgsSchema)]).optional(),
   penagihAkun: z.union([z.boolean(),z.lazy(() => PenagihArgsSchema)]).optional(),
+  komisiPetugas: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriFindManyArgsSchema)]).optional(),
   _count: z.union([z.boolean(),z.lazy(() => UserCountOutputTypeArgsSchema)]).optional(),
 }).strict();
 
@@ -1894,6 +1952,7 @@ export const UserCountOutputTypeSelectSchema: z.ZodType<Prisma.UserCountOutputTy
   portalTiketDiproses: z.boolean().optional(),
   portalBersamaAnggota: z.boolean().optional(),
   penagih: z.boolean().optional(),
+  komisiPetugas: z.boolean().optional(),
 }).strict();
 
 export const UserSelectSchema: z.ZodType<Prisma.UserSelect> = z.object({
@@ -1908,6 +1967,7 @@ export const UserSelectSchema: z.ZodType<Prisma.UserSelect> = z.object({
   npwp: z.boolean().optional(),
   omset: z.boolean().optional(),
   ppn: z.boolean().optional(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.boolean().optional(),
   nomor: z.boolean().optional(),
   alamat: z.boolean().optional(),
@@ -1957,6 +2017,7 @@ export const UserSelectSchema: z.ZodType<Prisma.UserSelect> = z.object({
   tripayGateway: z.union([z.boolean(),z.lazy(() => TripayGatewayArgsSchema)]).optional(),
   penagih: z.union([z.boolean(),z.lazy(() => PenagihFindManyArgsSchema)]).optional(),
   penagihAkun: z.union([z.boolean(),z.lazy(() => PenagihArgsSchema)]).optional(),
+  komisiPetugas: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriFindManyArgsSchema)]).optional(),
   _count: z.union([z.boolean(),z.lazy(() => UserCountOutputTypeArgsSchema)]).optional(),
 }).strict()
 
@@ -2261,6 +2322,7 @@ export const PelangganIncludeSchema: z.ZodType<Prisma.PelangganInclude> = z.obje
   tagihanDihapus: z.union([z.boolean(),z.lazy(() => TagihanDihapusFindManyArgsSchema)]).optional(),
   penagihPenugasan: z.union([z.boolean(),z.lazy(() => PenagihPenugasanArgsSchema)]).optional(),
   penagihPenugasanLog: z.union([z.boolean(),z.lazy(() => PenagihPenugasanLogFindManyArgsSchema)]).optional(),
+  komisiPetugas: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriFindManyArgsSchema)]).optional(),
   _count: z.union([z.boolean(),z.lazy(() => PelangganCountOutputTypeArgsSchema)]).optional(),
 }).strict();
 
@@ -2281,6 +2343,7 @@ export const PelangganCountOutputTypeSelectSchema: z.ZodType<Prisma.PelangganCou
   portalTiket: z.boolean().optional(),
   tagihanDihapus: z.boolean().optional(),
   penagihPenugasanLog: z.boolean().optional(),
+  komisiPetugas: z.boolean().optional(),
 }).strict();
 
 export const PelangganSelectSchema: z.ZodType<Prisma.PelangganSelect> = z.object({
@@ -2317,6 +2380,7 @@ export const PelangganSelectSchema: z.ZodType<Prisma.PelangganSelect> = z.object
   tagihanDihapus: z.union([z.boolean(),z.lazy(() => TagihanDihapusFindManyArgsSchema)]).optional(),
   penagihPenugasan: z.union([z.boolean(),z.lazy(() => PenagihPenugasanArgsSchema)]).optional(),
   penagihPenugasanLog: z.union([z.boolean(),z.lazy(() => PenagihPenugasanLogFindManyArgsSchema)]).optional(),
+  komisiPetugas: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriFindManyArgsSchema)]).optional(),
   _count: z.union([z.boolean(),z.lazy(() => PelangganCountOutputTypeArgsSchema)]).optional(),
 }).strict()
 
@@ -2630,6 +2694,7 @@ export const PembayaranIncludeSchema: z.ZodType<Prisma.PembayaranInclude> = z.ob
   paket: z.union([z.boolean(),z.lazy(() => PaketArgsSchema)]).optional(),
   bank: z.union([z.boolean(),z.lazy(() => BankArgsSchema)]).optional(),
   log: z.union([z.boolean(),z.lazy(() => LogBayarFindManyArgsSchema)]).optional(),
+  komisiPetugas: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriFindManyArgsSchema)]).optional(),
   tripayTransaksi: z.union([z.boolean(),z.lazy(() => TripayTransaksiFindManyArgsSchema)]).optional(),
   auto_isolir_logs: z.union([z.boolean(),z.lazy(() => AutoIsolirLogFindManyArgsSchema)]).optional(),
   _count: z.union([z.boolean(),z.lazy(() => PembayaranCountOutputTypeArgsSchema)]).optional(),
@@ -2646,6 +2711,7 @@ export const PembayaranCountOutputTypeArgsSchema: z.ZodType<Prisma.PembayaranCou
 
 export const PembayaranCountOutputTypeSelectSchema: z.ZodType<Prisma.PembayaranCountOutputTypeSelect> = z.object({
   log: z.boolean().optional(),
+  komisiPetugas: z.boolean().optional(),
   tripayTransaksi: z.boolean().optional(),
   auto_isolir_logs: z.boolean().optional(),
 }).strict();
@@ -2661,6 +2727,7 @@ export const PembayaranSelectSchema: z.ZodType<Prisma.PembayaranSelect> = z.obje
   bankId: z.boolean().optional(),
   metode: z.boolean().optional(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.boolean().optional(),
   status: z.boolean().optional(),
   created: z.boolean().optional(),
   updated: z.boolean().optional(),
@@ -2668,6 +2735,7 @@ export const PembayaranSelectSchema: z.ZodType<Prisma.PembayaranSelect> = z.obje
   paket: z.union([z.boolean(),z.lazy(() => PaketArgsSchema)]).optional(),
   bank: z.union([z.boolean(),z.lazy(() => BankArgsSchema)]).optional(),
   log: z.union([z.boolean(),z.lazy(() => LogBayarFindManyArgsSchema)]).optional(),
+  komisiPetugas: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriFindManyArgsSchema)]).optional(),
   tripayTransaksi: z.union([z.boolean(),z.lazy(() => TripayTransaksiFindManyArgsSchema)]).optional(),
   auto_isolir_logs: z.union([z.boolean(),z.lazy(() => AutoIsolirLogFindManyArgsSchema)]).optional(),
   _count: z.union([z.boolean(),z.lazy(() => PembayaranCountOutputTypeArgsSchema)]).optional(),
@@ -2679,6 +2747,7 @@ export const PembayaranSelectSchema: z.ZodType<Prisma.PembayaranSelect> = z.obje
 export const LogBayarIncludeSchema: z.ZodType<Prisma.LogBayarInclude> = z.object({
   pembayaran: z.union([z.boolean(),z.lazy(() => PembayaranArgsSchema)]).optional(),
   user: z.union([z.boolean(),z.lazy(() => UserArgsSchema)]).optional(),
+  komisiPetugas: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriArgsSchema)]).optional(),
 }).strict();
 
 export const LogBayarArgsSchema: z.ZodType<Prisma.LogBayarDefaultArgs> = z.object({
@@ -2696,6 +2765,7 @@ export const LogBayarSelectSchema: z.ZodType<Prisma.LogBayarSelect> = z.object({
   created: z.boolean().optional(),
   pembayaran: z.union([z.boolean(),z.lazy(() => PembayaranArgsSchema)]).optional(),
   user: z.union([z.boolean(),z.lazy(() => UserArgsSchema)]).optional(),
+  komisiPetugas: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriArgsSchema)]).optional(),
 }).strict()
 
 // PEMBAYARAN MITRA
@@ -3150,6 +3220,7 @@ export const PenagihIncludeSchema: z.ZodType<Prisma.PenagihInclude> = z.object({
   penugasan: z.union([z.boolean(),z.lazy(() => PenagihPenugasanFindManyArgsSchema)]).optional(),
   logDari: z.union([z.boolean(),z.lazy(() => PenagihPenugasanLogFindManyArgsSchema)]).optional(),
   logKe: z.union([z.boolean(),z.lazy(() => PenagihPenugasanLogFindManyArgsSchema)]).optional(),
+  komisi: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriFindManyArgsSchema)]).optional(),
   _count: z.union([z.boolean(),z.lazy(() => PenagihCountOutputTypeArgsSchema)]).optional(),
 }).strict();
 
@@ -3166,6 +3237,7 @@ export const PenagihCountOutputTypeSelectSchema: z.ZodType<Prisma.PenagihCountOu
   penugasan: z.boolean().optional(),
   logDari: z.boolean().optional(),
   logKe: z.boolean().optional(),
+  komisi: z.boolean().optional(),
 }).strict();
 
 export const PenagihSelectSchema: z.ZodType<Prisma.PenagihSelect> = z.object({
@@ -3175,6 +3247,7 @@ export const PenagihSelectSchema: z.ZodType<Prisma.PenagihSelect> = z.object({
   nama: z.boolean().optional(),
   nomor: z.boolean().optional(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.boolean().optional(),
   created: z.boolean().optional(),
   updated: z.boolean().optional(),
   owner: z.union([z.boolean(),z.lazy(() => UserArgsSchema)]).optional(),
@@ -3182,6 +3255,7 @@ export const PenagihSelectSchema: z.ZodType<Prisma.PenagihSelect> = z.object({
   penugasan: z.union([z.boolean(),z.lazy(() => PenagihPenugasanFindManyArgsSchema)]).optional(),
   logDari: z.union([z.boolean(),z.lazy(() => PenagihPenugasanLogFindManyArgsSchema)]).optional(),
   logKe: z.union([z.boolean(),z.lazy(() => PenagihPenugasanLogFindManyArgsSchema)]).optional(),
+  komisi: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriFindManyArgsSchema)]).optional(),
   _count: z.union([z.boolean(),z.lazy(() => PenagihCountOutputTypeArgsSchema)]).optional(),
 }).strict()
 
@@ -3236,6 +3310,44 @@ export const PenagihPenugasanLogSelectSchema: z.ZodType<Prisma.PenagihPenugasanL
   kePenagih: z.union([z.boolean(),z.lazy(() => PenagihArgsSchema)]).optional(),
 }).strict()
 
+// KOMISI PETUGAS ENTRI
+//------------------------------------------------------
+
+export const KomisiPetugasEntriIncludeSchema: z.ZodType<Prisma.KomisiPetugasEntriInclude> = z.object({
+  penagih: z.union([z.boolean(),z.lazy(() => PenagihArgsSchema)]).optional(),
+  actor: z.union([z.boolean(),z.lazy(() => UserArgsSchema)]).optional(),
+  pelanggan: z.union([z.boolean(),z.lazy(() => PelangganArgsSchema)]).optional(),
+  pembayaran: z.union([z.boolean(),z.lazy(() => PembayaranArgsSchema)]).optional(),
+  logBayar: z.union([z.boolean(),z.lazy(() => LogBayarArgsSchema)]).optional(),
+  reverses: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriArgsSchema)]).optional(),
+  reversedBy: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriArgsSchema)]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriDefaultArgs> = z.object({
+  select: z.lazy(() => KomisiPetugasEntriSelectSchema).optional(),
+  include: z.lazy(() => KomisiPetugasEntriIncludeSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriSelectSchema: z.ZodType<Prisma.KomisiPetugasEntriSelect> = z.object({
+  id: z.boolean().optional(),
+  ownerUserId: z.boolean().optional(),
+  penagihId: z.boolean().optional(),
+  actorUserId: z.boolean().optional(),
+  pelangganId: z.boolean().optional(),
+  pembayaranId: z.boolean().optional(),
+  logBayarId: z.boolean().optional(),
+  reversesId: z.boolean().optional(),
+  nominal: z.boolean().optional(),
+  created: z.boolean().optional(),
+  penagih: z.union([z.boolean(),z.lazy(() => PenagihArgsSchema)]).optional(),
+  actor: z.union([z.boolean(),z.lazy(() => UserArgsSchema)]).optional(),
+  pelanggan: z.union([z.boolean(),z.lazy(() => PelangganArgsSchema)]).optional(),
+  pembayaran: z.union([z.boolean(),z.lazy(() => PembayaranArgsSchema)]).optional(),
+  logBayar: z.union([z.boolean(),z.lazy(() => LogBayarArgsSchema)]).optional(),
+  reverses: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriArgsSchema)]).optional(),
+  reversedBy: z.union([z.boolean(),z.lazy(() => KomisiPetugasEntriArgsSchema)]).optional(),
+}).strict()
+
 
 /////////////////////////////////////////
 // INPUT TYPES
@@ -3256,6 +3368,7 @@ export const UserWhereInputSchema: z.ZodType<Prisma.UserWhereInput> = z.object({
   npwp: z.union([ z.lazy(() => StringNullableFilterSchema), z.string() ]).optional().nullable(),
   omset: z.union([ z.lazy(() => IntNullableFilterSchema), z.number() ]).optional().nullable(),
   ppn: z.union([ z.lazy(() => FloatNullableFilterSchema), z.number() ]).optional().nullable(),
+  ppnEnabled: z.union([ z.lazy(() => BoolFilterSchema), z.boolean() ]).optional(),
   parentId: z.union([ z.lazy(() => IntNullableFilterSchema), z.number() ]).optional().nullable(),
   nomor: z.union([ z.lazy(() => StringNullableFilterSchema), z.string() ]).optional().nullable(),
   alamat: z.union([ z.lazy(() => StringNullableFilterSchema), z.string() ]).optional().nullable(),
@@ -3305,6 +3418,7 @@ export const UserWhereInputSchema: z.ZodType<Prisma.UserWhereInput> = z.object({
   tripayGateway: z.union([ z.lazy(() => TripayGatewayNullableRelationFilterSchema), z.lazy(() => TripayGatewayWhereInputSchema) ]).optional().nullable(),
   penagih: z.lazy(() => PenagihListRelationFilterSchema).optional(),
   penagihAkun: z.union([ z.lazy(() => PenagihNullableRelationFilterSchema), z.lazy(() => PenagihWhereInputSchema) ]).optional().nullable(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriListRelationFilterSchema).optional(),
 }).strict();
 
 export const UserOrderByWithRelationInputSchema: z.ZodType<Prisma.UserOrderByWithRelationInput> = z.object({
@@ -3319,6 +3433,7 @@ export const UserOrderByWithRelationInputSchema: z.ZodType<Prisma.UserOrderByWit
   npwp: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   omset: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   ppn: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
+  ppnEnabled: z.lazy(() => SortOrderSchema).optional(),
   parentId: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   nomor: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   alamat: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
@@ -3368,6 +3483,7 @@ export const UserOrderByWithRelationInputSchema: z.ZodType<Prisma.UserOrderByWit
   tripayGateway: z.lazy(() => TripayGatewayOrderByWithRelationInputSchema).optional(),
   penagih: z.lazy(() => PenagihOrderByRelationAggregateInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihOrderByWithRelationInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriOrderByRelationAggregateInputSchema).optional(),
 }).strict();
 
 export const UserWhereUniqueInputSchema: z.ZodType<Prisma.UserWhereUniqueInput> = z.union([
@@ -3414,6 +3530,7 @@ export const UserWhereUniqueInputSchema: z.ZodType<Prisma.UserWhereUniqueInput> 
   npwp: z.union([ z.lazy(() => StringNullableFilterSchema), z.string() ]).optional().nullable(),
   omset: z.union([ z.lazy(() => IntNullableFilterSchema), z.number().int() ]).optional().nullable(),
   ppn: z.union([ z.lazy(() => FloatNullableFilterSchema), z.number() ]).optional().nullable(),
+  ppnEnabled: z.union([ z.lazy(() => BoolFilterSchema), z.boolean() ]).optional(),
   parentId: z.union([ z.lazy(() => IntNullableFilterSchema), z.number().int() ]).optional().nullable(),
   nomor: z.union([ z.lazy(() => StringNullableFilterSchema), z.string() ]).optional().nullable(),
   alamat: z.union([ z.lazy(() => StringNullableFilterSchema), z.string() ]).optional().nullable(),
@@ -3462,6 +3579,7 @@ export const UserWhereUniqueInputSchema: z.ZodType<Prisma.UserWhereUniqueInput> 
   tripayGateway: z.union([ z.lazy(() => TripayGatewayNullableRelationFilterSchema), z.lazy(() => TripayGatewayWhereInputSchema) ]).optional().nullable(),
   penagih: z.lazy(() => PenagihListRelationFilterSchema).optional(),
   penagihAkun: z.union([ z.lazy(() => PenagihNullableRelationFilterSchema), z.lazy(() => PenagihWhereInputSchema) ]).optional().nullable(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriListRelationFilterSchema).optional(),
 }).strict());
 
 export const UserOrderByWithAggregationInputSchema: z.ZodType<Prisma.UserOrderByWithAggregationInput> = z.object({
@@ -3476,6 +3594,7 @@ export const UserOrderByWithAggregationInputSchema: z.ZodType<Prisma.UserOrderBy
   npwp: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   omset: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   ppn: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
+  ppnEnabled: z.lazy(() => SortOrderSchema).optional(),
   parentId: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   nomor: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   alamat: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
@@ -3524,6 +3643,7 @@ export const UserScalarWhereWithAggregatesInputSchema: z.ZodType<Prisma.UserScal
   npwp: z.union([ z.lazy(() => StringNullableWithAggregatesFilterSchema), z.string() ]).optional().nullable(),
   omset: z.union([ z.lazy(() => IntNullableWithAggregatesFilterSchema), z.number() ]).optional().nullable(),
   ppn: z.union([ z.lazy(() => FloatNullableWithAggregatesFilterSchema), z.number() ]).optional().nullable(),
+  ppnEnabled: z.union([ z.lazy(() => BoolWithAggregatesFilterSchema), z.boolean() ]).optional(),
   parentId: z.union([ z.lazy(() => IntNullableWithAggregatesFilterSchema), z.number() ]).optional().nullable(),
   nomor: z.union([ z.lazy(() => StringNullableWithAggregatesFilterSchema), z.string() ]).optional().nullable(),
   alamat: z.union([ z.lazy(() => StringNullableWithAggregatesFilterSchema), z.string() ]).optional().nullable(),
@@ -4421,6 +4541,7 @@ export const PelangganWhereInputSchema: z.ZodType<Prisma.PelangganWhereInput> = 
   tagihanDihapus: z.lazy(() => TagihanDihapusListRelationFilterSchema).optional(),
   penagihPenugasan: z.union([ z.lazy(() => PenagihPenugasanNullableRelationFilterSchema), z.lazy(() => PenagihPenugasanWhereInputSchema) ]).optional().nullable(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogListRelationFilterSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriListRelationFilterSchema).optional(),
 }).strict();
 
 export const PelangganOrderByWithRelationInputSchema: z.ZodType<Prisma.PelangganOrderByWithRelationInput> = z.object({
@@ -4457,6 +4578,7 @@ export const PelangganOrderByWithRelationInputSchema: z.ZodType<Prisma.Pelanggan
   tagihanDihapus: z.lazy(() => TagihanDihapusOrderByRelationAggregateInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanOrderByWithRelationInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogOrderByRelationAggregateInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriOrderByRelationAggregateInputSchema).optional(),
 }).strict();
 
 export const PelangganWhereUniqueInputSchema: z.ZodType<Prisma.PelangganWhereUniqueInput> = z.union([
@@ -4524,6 +4646,7 @@ export const PelangganWhereUniqueInputSchema: z.ZodType<Prisma.PelangganWhereUni
   tagihanDihapus: z.lazy(() => TagihanDihapusListRelationFilterSchema).optional(),
   penagihPenugasan: z.union([ z.lazy(() => PenagihPenugasanNullableRelationFilterSchema), z.lazy(() => PenagihPenugasanWhereInputSchema) ]).optional().nullable(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogListRelationFilterSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriListRelationFilterSchema).optional(),
 }).strict());
 
 export const PelangganOrderByWithAggregationInputSchema: z.ZodType<Prisma.PelangganOrderByWithAggregationInput> = z.object({
@@ -5492,6 +5615,7 @@ export const PembayaranWhereInputSchema: z.ZodType<Prisma.PembayaranWhereInput> 
   bankId: z.union([ z.lazy(() => IntNullableFilterSchema), z.number() ]).optional().nullable(),
   metode: z.union([ z.lazy(() => EnumMetodeBayarNullableFilterSchema), z.lazy(() => MetodeBayarSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.lazy(() => BoolFilterSchema), z.boolean() ]).optional(),
+  bayarSekaligus: z.union([ z.lazy(() => IntNullableFilterSchema), z.number() ]).optional().nullable(),
   status: z.union([ z.lazy(() => EnumStatusBayarFilterSchema), z.lazy(() => StatusBayarSchema) ]).optional(),
   created: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
   updated: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
@@ -5499,6 +5623,7 @@ export const PembayaranWhereInputSchema: z.ZodType<Prisma.PembayaranWhereInput> 
   paket: z.union([ z.lazy(() => PaketRelationFilterSchema), z.lazy(() => PaketWhereInputSchema) ]).optional(),
   bank: z.union([ z.lazy(() => BankNullableRelationFilterSchema), z.lazy(() => BankWhereInputSchema) ]).optional().nullable(),
   log: z.lazy(() => LogBayarListRelationFilterSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriListRelationFilterSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiListRelationFilterSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogListRelationFilterSchema).optional(),
 }).strict();
@@ -5514,6 +5639,7 @@ export const PembayaranOrderByWithRelationInputSchema: z.ZodType<Prisma.Pembayar
   bankId: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   metode: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   nonaktif: z.lazy(() => SortOrderSchema).optional(),
+  bayarSekaligus: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   status: z.lazy(() => SortOrderSchema).optional(),
   created: z.lazy(() => SortOrderSchema).optional(),
   updated: z.lazy(() => SortOrderSchema).optional(),
@@ -5521,6 +5647,7 @@ export const PembayaranOrderByWithRelationInputSchema: z.ZodType<Prisma.Pembayar
   paket: z.lazy(() => PaketOrderByWithRelationInputSchema).optional(),
   bank: z.lazy(() => BankOrderByWithRelationInputSchema).optional(),
   log: z.lazy(() => LogBayarOrderByRelationAggregateInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriOrderByRelationAggregateInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiOrderByRelationAggregateInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogOrderByRelationAggregateInputSchema).optional(),
 }).strict();
@@ -5568,6 +5695,7 @@ export const PembayaranWhereUniqueInputSchema: z.ZodType<Prisma.PembayaranWhereU
   bankId: z.union([ z.lazy(() => IntNullableFilterSchema), z.number().int() ]).optional().nullable(),
   metode: z.union([ z.lazy(() => EnumMetodeBayarNullableFilterSchema), z.lazy(() => MetodeBayarSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.lazy(() => BoolFilterSchema), z.boolean() ]).optional(),
+  bayarSekaligus: z.union([ z.lazy(() => IntNullableFilterSchema), z.number().int() ]).optional().nullable(),
   status: z.union([ z.lazy(() => EnumStatusBayarFilterSchema), z.lazy(() => StatusBayarSchema) ]).optional(),
   created: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
   updated: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
@@ -5575,6 +5703,7 @@ export const PembayaranWhereUniqueInputSchema: z.ZodType<Prisma.PembayaranWhereU
   paket: z.union([ z.lazy(() => PaketRelationFilterSchema), z.lazy(() => PaketWhereInputSchema) ]).optional(),
   bank: z.union([ z.lazy(() => BankNullableRelationFilterSchema), z.lazy(() => BankWhereInputSchema) ]).optional().nullable(),
   log: z.lazy(() => LogBayarListRelationFilterSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriListRelationFilterSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiListRelationFilterSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogListRelationFilterSchema).optional(),
 }).strict());
@@ -5590,6 +5719,7 @@ export const PembayaranOrderByWithAggregationInputSchema: z.ZodType<Prisma.Pemba
   bankId: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   metode: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   nonaktif: z.lazy(() => SortOrderSchema).optional(),
+  bayarSekaligus: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   status: z.lazy(() => SortOrderSchema).optional(),
   created: z.lazy(() => SortOrderSchema).optional(),
   updated: z.lazy(() => SortOrderSchema).optional(),
@@ -5614,6 +5744,7 @@ export const PembayaranScalarWhereWithAggregatesInputSchema: z.ZodType<Prisma.Pe
   bankId: z.union([ z.lazy(() => IntNullableWithAggregatesFilterSchema), z.number() ]).optional().nullable(),
   metode: z.union([ z.lazy(() => EnumMetodeBayarNullableWithAggregatesFilterSchema), z.lazy(() => MetodeBayarSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.lazy(() => BoolWithAggregatesFilterSchema), z.boolean() ]).optional(),
+  bayarSekaligus: z.union([ z.lazy(() => IntNullableWithAggregatesFilterSchema), z.number() ]).optional().nullable(),
   status: z.union([ z.lazy(() => EnumStatusBayarWithAggregatesFilterSchema), z.lazy(() => StatusBayarSchema) ]).optional(),
   created: z.union([ z.lazy(() => DateTimeWithAggregatesFilterSchema), z.coerce.date() ]).optional(),
   updated: z.union([ z.lazy(() => DateTimeWithAggregatesFilterSchema), z.coerce.date() ]).optional(),
@@ -5632,6 +5763,7 @@ export const LogBayarWhereInputSchema: z.ZodType<Prisma.LogBayarWhereInput> = z.
   created: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
   pembayaran: z.union([ z.lazy(() => PembayaranRelationFilterSchema), z.lazy(() => PembayaranWhereInputSchema) ]).optional(),
   user: z.union([ z.lazy(() => UserRelationFilterSchema), z.lazy(() => UserWhereInputSchema) ]).optional(),
+  komisiPetugas: z.union([ z.lazy(() => KomisiPetugasEntriNullableRelationFilterSchema), z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional().nullable(),
 }).strict();
 
 export const LogBayarOrderByWithRelationInputSchema: z.ZodType<Prisma.LogBayarOrderByWithRelationInput> = z.object({
@@ -5644,6 +5776,7 @@ export const LogBayarOrderByWithRelationInputSchema: z.ZodType<Prisma.LogBayarOr
   created: z.lazy(() => SortOrderSchema).optional(),
   pembayaran: z.lazy(() => PembayaranOrderByWithRelationInputSchema).optional(),
   user: z.lazy(() => UserOrderByWithRelationInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriOrderByWithRelationInputSchema).optional(),
 }).strict();
 
 export const LogBayarWhereUniqueInputSchema: z.ZodType<Prisma.LogBayarWhereUniqueInput> = z.object({
@@ -5662,6 +5795,7 @@ export const LogBayarWhereUniqueInputSchema: z.ZodType<Prisma.LogBayarWhereUniqu
   created: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
   pembayaran: z.union([ z.lazy(() => PembayaranRelationFilterSchema), z.lazy(() => PembayaranWhereInputSchema) ]).optional(),
   user: z.union([ z.lazy(() => UserRelationFilterSchema), z.lazy(() => UserWhereInputSchema) ]).optional(),
+  komisiPetugas: z.union([ z.lazy(() => KomisiPetugasEntriNullableRelationFilterSchema), z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional().nullable(),
 }).strict());
 
 export const LogBayarOrderByWithAggregationInputSchema: z.ZodType<Prisma.LogBayarOrderByWithAggregationInput> = z.object({
@@ -7169,6 +7303,7 @@ export const PenagihWhereInputSchema: z.ZodType<Prisma.PenagihWhereInput> = z.ob
   nama: z.union([ z.lazy(() => StringFilterSchema), z.string() ]).optional(),
   nomor: z.union([ z.lazy(() => StringNullableFilterSchema), z.string() ]).optional().nullable(),
   aktif: z.union([ z.lazy(() => BoolFilterSchema), z.boolean() ]).optional(),
+  komisiNominal: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
   created: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
   updated: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
   owner: z.union([ z.lazy(() => UserRelationFilterSchema), z.lazy(() => UserWhereInputSchema) ]).optional(),
@@ -7176,6 +7311,7 @@ export const PenagihWhereInputSchema: z.ZodType<Prisma.PenagihWhereInput> = z.ob
   penugasan: z.lazy(() => PenagihPenugasanListRelationFilterSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogListRelationFilterSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogListRelationFilterSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriListRelationFilterSchema).optional(),
 }).strict();
 
 export const PenagihOrderByWithRelationInputSchema: z.ZodType<Prisma.PenagihOrderByWithRelationInput> = z.object({
@@ -7185,6 +7321,7 @@ export const PenagihOrderByWithRelationInputSchema: z.ZodType<Prisma.PenagihOrde
   nama: z.lazy(() => SortOrderSchema).optional(),
   nomor: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   aktif: z.lazy(() => SortOrderSchema).optional(),
+  komisiNominal: z.lazy(() => SortOrderSchema).optional(),
   created: z.lazy(() => SortOrderSchema).optional(),
   updated: z.lazy(() => SortOrderSchema).optional(),
   owner: z.lazy(() => UserOrderByWithRelationInputSchema).optional(),
@@ -7192,6 +7329,7 @@ export const PenagihOrderByWithRelationInputSchema: z.ZodType<Prisma.PenagihOrde
   penugasan: z.lazy(() => PenagihPenugasanOrderByRelationAggregateInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogOrderByRelationAggregateInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogOrderByRelationAggregateInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriOrderByRelationAggregateInputSchema).optional(),
 }).strict();
 
 export const PenagihWhereUniqueInputSchema: z.ZodType<Prisma.PenagihWhereUniqueInput> = z.union([
@@ -7216,6 +7354,7 @@ export const PenagihWhereUniqueInputSchema: z.ZodType<Prisma.PenagihWhereUniqueI
   nama: z.union([ z.lazy(() => StringFilterSchema), z.string() ]).optional(),
   nomor: z.union([ z.lazy(() => StringNullableFilterSchema), z.string() ]).optional().nullable(),
   aktif: z.union([ z.lazy(() => BoolFilterSchema), z.boolean() ]).optional(),
+  komisiNominal: z.union([ z.lazy(() => IntFilterSchema), z.number().int() ]).optional(),
   created: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
   updated: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
   owner: z.union([ z.lazy(() => UserRelationFilterSchema), z.lazy(() => UserWhereInputSchema) ]).optional(),
@@ -7223,6 +7362,7 @@ export const PenagihWhereUniqueInputSchema: z.ZodType<Prisma.PenagihWhereUniqueI
   penugasan: z.lazy(() => PenagihPenugasanListRelationFilterSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogListRelationFilterSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogListRelationFilterSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriListRelationFilterSchema).optional(),
 }).strict());
 
 export const PenagihOrderByWithAggregationInputSchema: z.ZodType<Prisma.PenagihOrderByWithAggregationInput> = z.object({
@@ -7232,6 +7372,7 @@ export const PenagihOrderByWithAggregationInputSchema: z.ZodType<Prisma.PenagihO
   nama: z.lazy(() => SortOrderSchema).optional(),
   nomor: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
   aktif: z.lazy(() => SortOrderSchema).optional(),
+  komisiNominal: z.lazy(() => SortOrderSchema).optional(),
   created: z.lazy(() => SortOrderSchema).optional(),
   updated: z.lazy(() => SortOrderSchema).optional(),
   _count: z.lazy(() => PenagihCountOrderByAggregateInputSchema).optional(),
@@ -7251,6 +7392,7 @@ export const PenagihScalarWhereWithAggregatesInputSchema: z.ZodType<Prisma.Penag
   nama: z.union([ z.lazy(() => StringWithAggregatesFilterSchema), z.string() ]).optional(),
   nomor: z.union([ z.lazy(() => StringNullableWithAggregatesFilterSchema), z.string() ]).optional().nullable(),
   aktif: z.union([ z.lazy(() => BoolWithAggregatesFilterSchema), z.boolean() ]).optional(),
+  komisiNominal: z.union([ z.lazy(() => IntWithAggregatesFilterSchema), z.number() ]).optional(),
   created: z.union([ z.lazy(() => DateTimeWithAggregatesFilterSchema), z.coerce.date() ]).optional(),
   updated: z.union([ z.lazy(() => DateTimeWithAggregatesFilterSchema), z.coerce.date() ]).optional(),
 }).strict();
@@ -7399,6 +7541,134 @@ export const PenagihPenugasanLogScalarWhereWithAggregatesInputSchema: z.ZodType<
   created: z.union([ z.lazy(() => DateTimeWithAggregatesFilterSchema), z.coerce.date() ]).optional(),
 }).strict();
 
+export const KomisiPetugasEntriWhereInputSchema: z.ZodType<Prisma.KomisiPetugasEntriWhereInput> = z.object({
+  AND: z.union([ z.lazy(() => KomisiPetugasEntriWhereInputSchema), z.lazy(() => KomisiPetugasEntriWhereInputSchema).array() ]).optional(),
+  OR: z.lazy(() => KomisiPetugasEntriWhereInputSchema).array().optional(),
+  NOT: z.union([ z.lazy(() => KomisiPetugasEntriWhereInputSchema), z.lazy(() => KomisiPetugasEntriWhereInputSchema).array() ]).optional(),
+  id: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  ownerUserId: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  penagihId: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  actorUserId: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  pelangganId: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  pembayaranId: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  logBayarId: z.union([ z.lazy(() => IntNullableFilterSchema), z.number() ]).optional().nullable(),
+  reversesId: z.union([ z.lazy(() => IntNullableFilterSchema), z.number() ]).optional().nullable(),
+  nominal: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  created: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
+  penagih: z.union([ z.lazy(() => PenagihRelationFilterSchema), z.lazy(() => PenagihWhereInputSchema) ]).optional(),
+  actor: z.union([ z.lazy(() => UserRelationFilterSchema), z.lazy(() => UserWhereInputSchema) ]).optional(),
+  pelanggan: z.union([ z.lazy(() => PelangganRelationFilterSchema), z.lazy(() => PelangganWhereInputSchema) ]).optional(),
+  pembayaran: z.union([ z.lazy(() => PembayaranRelationFilterSchema), z.lazy(() => PembayaranWhereInputSchema) ]).optional(),
+  logBayar: z.union([ z.lazy(() => LogBayarNullableRelationFilterSchema), z.lazy(() => LogBayarWhereInputSchema) ]).optional().nullable(),
+  reverses: z.union([ z.lazy(() => KomisiPetugasEntriNullableRelationFilterSchema), z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional().nullable(),
+  reversedBy: z.union([ z.lazy(() => KomisiPetugasEntriNullableRelationFilterSchema), z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional().nullable(),
+}).strict();
+
+export const KomisiPetugasEntriOrderByWithRelationInputSchema: z.ZodType<Prisma.KomisiPetugasEntriOrderByWithRelationInput> = z.object({
+  id: z.lazy(() => SortOrderSchema).optional(),
+  ownerUserId: z.lazy(() => SortOrderSchema).optional(),
+  penagihId: z.lazy(() => SortOrderSchema).optional(),
+  actorUserId: z.lazy(() => SortOrderSchema).optional(),
+  pelangganId: z.lazy(() => SortOrderSchema).optional(),
+  pembayaranId: z.lazy(() => SortOrderSchema).optional(),
+  logBayarId: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
+  reversesId: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
+  nominal: z.lazy(() => SortOrderSchema).optional(),
+  created: z.lazy(() => SortOrderSchema).optional(),
+  penagih: z.lazy(() => PenagihOrderByWithRelationInputSchema).optional(),
+  actor: z.lazy(() => UserOrderByWithRelationInputSchema).optional(),
+  pelanggan: z.lazy(() => PelangganOrderByWithRelationInputSchema).optional(),
+  pembayaran: z.lazy(() => PembayaranOrderByWithRelationInputSchema).optional(),
+  logBayar: z.lazy(() => LogBayarOrderByWithRelationInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriOrderByWithRelationInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriOrderByWithRelationInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriWhereUniqueInputSchema: z.ZodType<Prisma.KomisiPetugasEntriWhereUniqueInput> = z.union([
+  z.object({
+    id: z.number().int(),
+    logBayarId: z.number().int(),
+    reversesId: z.number().int(),
+  }),
+  z.object({
+    id: z.number().int(),
+    logBayarId: z.number().int(),
+  }),
+  z.object({
+    id: z.number().int(),
+    reversesId: z.number().int(),
+  }),
+  z.object({
+    id: z.number().int(),
+  }),
+  z.object({
+    logBayarId: z.number().int(),
+    reversesId: z.number().int(),
+  }),
+  z.object({
+    logBayarId: z.number().int(),
+  }),
+  z.object({
+    reversesId: z.number().int(),
+  }),
+])
+.and(z.object({
+  id: z.number().int().optional(),
+  logBayarId: z.number().int().optional(),
+  reversesId: z.number().int().optional(),
+  AND: z.union([ z.lazy(() => KomisiPetugasEntriWhereInputSchema), z.lazy(() => KomisiPetugasEntriWhereInputSchema).array() ]).optional(),
+  OR: z.lazy(() => KomisiPetugasEntriWhereInputSchema).array().optional(),
+  NOT: z.union([ z.lazy(() => KomisiPetugasEntriWhereInputSchema), z.lazy(() => KomisiPetugasEntriWhereInputSchema).array() ]).optional(),
+  ownerUserId: z.union([ z.lazy(() => IntFilterSchema), z.number().int() ]).optional(),
+  penagihId: z.union([ z.lazy(() => IntFilterSchema), z.number().int() ]).optional(),
+  actorUserId: z.union([ z.lazy(() => IntFilterSchema), z.number().int() ]).optional(),
+  pelangganId: z.union([ z.lazy(() => IntFilterSchema), z.number().int() ]).optional(),
+  pembayaranId: z.union([ z.lazy(() => IntFilterSchema), z.number().int() ]).optional(),
+  nominal: z.union([ z.lazy(() => IntFilterSchema), z.number().int() ]).optional(),
+  created: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
+  penagih: z.union([ z.lazy(() => PenagihRelationFilterSchema), z.lazy(() => PenagihWhereInputSchema) ]).optional(),
+  actor: z.union([ z.lazy(() => UserRelationFilterSchema), z.lazy(() => UserWhereInputSchema) ]).optional(),
+  pelanggan: z.union([ z.lazy(() => PelangganRelationFilterSchema), z.lazy(() => PelangganWhereInputSchema) ]).optional(),
+  pembayaran: z.union([ z.lazy(() => PembayaranRelationFilterSchema), z.lazy(() => PembayaranWhereInputSchema) ]).optional(),
+  logBayar: z.union([ z.lazy(() => LogBayarNullableRelationFilterSchema), z.lazy(() => LogBayarWhereInputSchema) ]).optional().nullable(),
+  reverses: z.union([ z.lazy(() => KomisiPetugasEntriNullableRelationFilterSchema), z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional().nullable(),
+  reversedBy: z.union([ z.lazy(() => KomisiPetugasEntriNullableRelationFilterSchema), z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional().nullable(),
+}).strict());
+
+export const KomisiPetugasEntriOrderByWithAggregationInputSchema: z.ZodType<Prisma.KomisiPetugasEntriOrderByWithAggregationInput> = z.object({
+  id: z.lazy(() => SortOrderSchema).optional(),
+  ownerUserId: z.lazy(() => SortOrderSchema).optional(),
+  penagihId: z.lazy(() => SortOrderSchema).optional(),
+  actorUserId: z.lazy(() => SortOrderSchema).optional(),
+  pelangganId: z.lazy(() => SortOrderSchema).optional(),
+  pembayaranId: z.lazy(() => SortOrderSchema).optional(),
+  logBayarId: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
+  reversesId: z.union([ z.lazy(() => SortOrderSchema), z.lazy(() => SortOrderInputSchema) ]).optional(),
+  nominal: z.lazy(() => SortOrderSchema).optional(),
+  created: z.lazy(() => SortOrderSchema).optional(),
+  _count: z.lazy(() => KomisiPetugasEntriCountOrderByAggregateInputSchema).optional(),
+  _avg: z.lazy(() => KomisiPetugasEntriAvgOrderByAggregateInputSchema).optional(),
+  _max: z.lazy(() => KomisiPetugasEntriMaxOrderByAggregateInputSchema).optional(),
+  _min: z.lazy(() => KomisiPetugasEntriMinOrderByAggregateInputSchema).optional(),
+  _sum: z.lazy(() => KomisiPetugasEntriSumOrderByAggregateInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriScalarWhereWithAggregatesInputSchema: z.ZodType<Prisma.KomisiPetugasEntriScalarWhereWithAggregatesInput> = z.object({
+  AND: z.union([ z.lazy(() => KomisiPetugasEntriScalarWhereWithAggregatesInputSchema), z.lazy(() => KomisiPetugasEntriScalarWhereWithAggregatesInputSchema).array() ]).optional(),
+  OR: z.lazy(() => KomisiPetugasEntriScalarWhereWithAggregatesInputSchema).array().optional(),
+  NOT: z.union([ z.lazy(() => KomisiPetugasEntriScalarWhereWithAggregatesInputSchema), z.lazy(() => KomisiPetugasEntriScalarWhereWithAggregatesInputSchema).array() ]).optional(),
+  id: z.union([ z.lazy(() => IntWithAggregatesFilterSchema), z.number() ]).optional(),
+  ownerUserId: z.union([ z.lazy(() => IntWithAggregatesFilterSchema), z.number() ]).optional(),
+  penagihId: z.union([ z.lazy(() => IntWithAggregatesFilterSchema), z.number() ]).optional(),
+  actorUserId: z.union([ z.lazy(() => IntWithAggregatesFilterSchema), z.number() ]).optional(),
+  pelangganId: z.union([ z.lazy(() => IntWithAggregatesFilterSchema), z.number() ]).optional(),
+  pembayaranId: z.union([ z.lazy(() => IntWithAggregatesFilterSchema), z.number() ]).optional(),
+  logBayarId: z.union([ z.lazy(() => IntNullableWithAggregatesFilterSchema), z.number() ]).optional().nullable(),
+  reversesId: z.union([ z.lazy(() => IntNullableWithAggregatesFilterSchema), z.number() ]).optional().nullable(),
+  nominal: z.union([ z.lazy(() => IntWithAggregatesFilterSchema), z.number() ]).optional(),
+  created: z.union([ z.lazy(() => DateTimeWithAggregatesFilterSchema), z.coerce.date() ]).optional(),
+}).strict();
+
 export const UserCreateInputSchema: z.ZodType<Prisma.UserCreateInput> = z.object({
   nama: z.string().min(1, { message: "Required" }),
   user: z.string().min(1, { message: "Required" }),
@@ -7410,6 +7680,7 @@ export const UserCreateInputSchema: z.ZodType<Prisma.UserCreateInput> = z.object
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -7458,6 +7729,7 @@ export const UserCreateInputSchema: z.ZodType<Prisma.UserCreateInput> = z.object
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateInputSchema: z.ZodType<Prisma.UserUncheckedCreateInput> = z.object({
@@ -7472,6 +7744,7 @@ export const UserUncheckedCreateInputSchema: z.ZodType<Prisma.UserUncheckedCreat
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -7520,6 +7793,7 @@ export const UserUncheckedCreateInputSchema: z.ZodType<Prisma.UserUncheckedCreat
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUpdateInputSchema: z.ZodType<Prisma.UserUpdateInput> = z.object({
@@ -7533,6 +7807,7 @@ export const UserUpdateInputSchema: z.ZodType<Prisma.UserUpdateInput> = z.object
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -7581,6 +7856,7 @@ export const UserUpdateInputSchema: z.ZodType<Prisma.UserUpdateInput> = z.object
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateInputSchema: z.ZodType<Prisma.UserUncheckedUpdateInput> = z.object({
@@ -7595,6 +7871,7 @@ export const UserUncheckedUpdateInputSchema: z.ZodType<Prisma.UserUncheckedUpdat
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -7643,6 +7920,7 @@ export const UserUncheckedUpdateInputSchema: z.ZodType<Prisma.UserUncheckedUpdat
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserCreateManyInputSchema: z.ZodType<Prisma.UserCreateManyInput> = z.object({
@@ -7657,6 +7935,7 @@ export const UserCreateManyInputSchema: z.ZodType<Prisma.UserCreateManyInput> = 
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -7696,6 +7975,7 @@ export const UserUpdateManyMutationInputSchema: z.ZodType<Prisma.UserUpdateManyM
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -7735,6 +8015,7 @@ export const UserUncheckedUpdateManyInputSchema: z.ZodType<Prisma.UserUncheckedU
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -8624,6 +8905,7 @@ export const PelangganCreateInputSchema: z.ZodType<Prisma.PelangganCreateInput> 
   tagihanDihapus: z.lazy(() => TagihanDihapusCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedCreateInputSchema: z.ZodType<Prisma.PelangganUncheckedCreateInput> = z.object({
@@ -8657,6 +8939,7 @@ export const PelangganUncheckedCreateInputSchema: z.ZodType<Prisma.PelangganUnch
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganUpdateInputSchema: z.ZodType<Prisma.PelangganUpdateInput> = z.object({
@@ -8689,6 +8972,7 @@ export const PelangganUpdateInputSchema: z.ZodType<Prisma.PelangganUpdateInput> 
   tagihanDihapus: z.lazy(() => TagihanDihapusUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateInput> = z.object({
@@ -8722,6 +9006,7 @@ export const PelangganUncheckedUpdateInputSchema: z.ZodType<Prisma.PelangganUnch
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateManyInputSchema: z.ZodType<Prisma.PelangganCreateManyInput> = z.object({
@@ -9670,6 +9955,7 @@ export const PembayaranCreateInputSchema: z.ZodType<Prisma.PembayaranCreateInput
   total: z.number(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
@@ -9677,6 +9963,7 @@ export const PembayaranCreateInputSchema: z.ZodType<Prisma.PembayaranCreateInput
   paket: z.lazy(() => PaketCreateNestedOneWithoutPembayaranInputSchema),
   bank: z.lazy(() => BankCreateNestedOneWithoutPembayaranInputSchema).optional(),
   log: z.lazy(() => LogBayarCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPembayaranInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiCreateNestedManyWithoutPembayaranInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
@@ -9692,10 +9979,12 @@ export const PembayaranUncheckedCreateInputSchema: z.ZodType<Prisma.PembayaranUn
   bankId: z.number().int().optional().nullable(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   log: z.lazy(() => LogBayarUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
@@ -9707,6 +9996,7 @@ export const PembayaranUpdateInputSchema: z.ZodType<Prisma.PembayaranUpdateInput
   total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
@@ -9714,6 +10004,7 @@ export const PembayaranUpdateInputSchema: z.ZodType<Prisma.PembayaranUpdateInput
   paket: z.lazy(() => PaketUpdateOneRequiredWithoutPembayaranNestedInputSchema).optional(),
   bank: z.lazy(() => BankUpdateOneWithoutPembayaranNestedInputSchema).optional(),
   log: z.lazy(() => LogBayarUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
@@ -9729,10 +10020,12 @@ export const PembayaranUncheckedUpdateInputSchema: z.ZodType<Prisma.PembayaranUn
   bankId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   log: z.lazy(() => LogBayarUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
@@ -9748,6 +10041,7 @@ export const PembayaranCreateManyInputSchema: z.ZodType<Prisma.PembayaranCreateM
   bankId: z.number().int().optional().nullable(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
@@ -9760,6 +10054,7 @@ export const PembayaranUpdateManyMutationInputSchema: z.ZodType<Prisma.Pembayara
   total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
@@ -9776,6 +10071,7 @@ export const PembayaranUncheckedUpdateManyInputSchema: z.ZodType<Prisma.Pembayar
   bankId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
@@ -9788,6 +10084,7 @@ export const LogBayarCreateInputSchema: z.ZodType<Prisma.LogBayarCreateInput> = 
   created: z.coerce.date().optional(),
   pembayaran: z.lazy(() => PembayaranCreateNestedOneWithoutLogInputSchema),
   user: z.lazy(() => UserCreateNestedOneWithoutLog_bayarInputSchema),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutLogBayarInputSchema).optional(),
 }).strict();
 
 export const LogBayarUncheckedCreateInputSchema: z.ZodType<Prisma.LogBayarUncheckedCreateInput> = z.object({
@@ -9798,6 +10095,7 @@ export const LogBayarUncheckedCreateInputSchema: z.ZodType<Prisma.LogBayarUnchec
   status: z.lazy(() => StatusBayarSchema),
   inputterId: z.number().int(),
   created: z.coerce.date().optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedOneWithoutLogBayarInputSchema).optional(),
 }).strict();
 
 export const LogBayarUpdateInputSchema: z.ZodType<Prisma.LogBayarUpdateInput> = z.object({
@@ -9807,6 +10105,7 @@ export const LogBayarUpdateInputSchema: z.ZodType<Prisma.LogBayarUpdateInput> = 
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   pembayaran: z.lazy(() => PembayaranUpdateOneRequiredWithoutLogNestedInputSchema).optional(),
   user: z.lazy(() => UserUpdateOneRequiredWithoutLog_bayarNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutLogBayarNestedInputSchema).optional(),
 }).strict();
 
 export const LogBayarUncheckedUpdateInputSchema: z.ZodType<Prisma.LogBayarUncheckedUpdateInput> = z.object({
@@ -9817,6 +10116,7 @@ export const LogBayarUncheckedUpdateInputSchema: z.ZodType<Prisma.LogBayarUnchec
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   inputterId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateOneWithoutLogBayarNestedInputSchema).optional(),
 }).strict();
 
 export const LogBayarCreateManyInputSchema: z.ZodType<Prisma.LogBayarCreateManyInput> = z.object({
@@ -11243,6 +11543,7 @@ export const PenagihCreateInputSchema: z.ZodType<Prisma.PenagihCreateInput> = z.
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   owner: z.lazy(() => UserCreateNestedOneWithoutPenagihInputSchema),
@@ -11250,6 +11551,7 @@ export const PenagihCreateInputSchema: z.ZodType<Prisma.PenagihCreateInput> = z.
   penugasan: z.lazy(() => PenagihPenugasanCreateNestedManyWithoutPenagihInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutDariPenagihInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutKePenagihInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPenagihInputSchema).optional(),
 }).strict();
 
 export const PenagihUncheckedCreateInputSchema: z.ZodType<Prisma.PenagihUncheckedCreateInput> = z.object({
@@ -11259,17 +11561,20 @@ export const PenagihUncheckedCreateInputSchema: z.ZodType<Prisma.PenagihUnchecke
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   penugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedManyWithoutPenagihInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutDariPenagihInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutKePenagihInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPenagihInputSchema).optional(),
 }).strict();
 
 export const PenagihUpdateInputSchema: z.ZodType<Prisma.PenagihUpdateInput> = z.object({
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   owner: z.lazy(() => UserUpdateOneRequiredWithoutPenagihNestedInputSchema).optional(),
@@ -11277,6 +11582,7 @@ export const PenagihUpdateInputSchema: z.ZodType<Prisma.PenagihUpdateInput> = z.
   penugasan: z.lazy(() => PenagihPenugasanUpdateManyWithoutPenagihNestedInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutDariPenagihNestedInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutKePenagihNestedInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPenagihNestedInputSchema).optional(),
 }).strict();
 
 export const PenagihUncheckedUpdateInputSchema: z.ZodType<Prisma.PenagihUncheckedUpdateInput> = z.object({
@@ -11286,11 +11592,13 @@ export const PenagihUncheckedUpdateInputSchema: z.ZodType<Prisma.PenagihUnchecke
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   penugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateManyWithoutPenagihNestedInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutDariPenagihNestedInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutKePenagihNestedInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPenagihNestedInputSchema).optional(),
 }).strict();
 
 export const PenagihCreateManyInputSchema: z.ZodType<Prisma.PenagihCreateManyInput> = z.object({
@@ -11300,6 +11608,7 @@ export const PenagihCreateManyInputSchema: z.ZodType<Prisma.PenagihCreateManyInp
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
 }).strict();
@@ -11308,6 +11617,7 @@ export const PenagihUpdateManyMutationInputSchema: z.ZodType<Prisma.PenagihUpdat
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
 }).strict();
@@ -11319,6 +11629,7 @@ export const PenagihUncheckedUpdateManyInputSchema: z.ZodType<Prisma.PenagihUnch
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
 }).strict();
@@ -11448,6 +11759,92 @@ export const PenagihPenugasanLogUncheckedUpdateManyInputSchema: z.ZodType<Prisma
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
 }).strict();
 
+export const KomisiPetugasEntriCreateInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateInput> = z.object({
+  ownerUserId: z.number().int(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  penagih: z.lazy(() => PenagihCreateNestedOneWithoutKomisiInputSchema),
+  actor: z.lazy(() => UserCreateNestedOneWithoutKomisiPetugasInputSchema),
+  pelanggan: z.lazy(() => PelangganCreateNestedOneWithoutKomisiPetugasInputSchema),
+  pembayaran: z.lazy(() => PembayaranCreateNestedOneWithoutKomisiPetugasInputSchema),
+  logBayar: z.lazy(() => LogBayarCreateNestedOneWithoutKomisiPetugasInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversedByInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedCreateInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  penagihId: z.number().int(),
+  actorUserId: z.number().int(),
+  pelangganId: z.number().int(),
+  pembayaranId: z.number().int(),
+  logBayarId: z.number().int().optional().nullable(),
+  reversesId: z.number().int().optional().nullable(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpdateInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateInput> = z.object({
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  penagih: z.lazy(() => PenagihUpdateOneRequiredWithoutKomisiNestedInputSchema).optional(),
+  actor: z.lazy(() => UserUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  pelanggan: z.lazy(() => PelangganUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  pembayaran: z.lazy(() => PembayaranUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  logBayar: z.lazy(() => LogBayarUpdateOneWithoutKomisiPetugasNestedInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversedByNestedInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversesNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  penagihId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  actorUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pelangganId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaranId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  logBayarId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  reversesId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedUpdateOneWithoutReversesNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriCreateManyInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateManyInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  penagihId: z.number().int(),
+  actorUserId: z.number().int(),
+  pelangganId: z.number().int(),
+  pembayaranId: z.number().int(),
+  logBayarId: z.number().int().optional().nullable(),
+  reversesId: z.number().int().optional().nullable(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpdateManyMutationInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateManyMutationInput> = z.object({
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateManyInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateManyInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  penagihId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  actorUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pelangganId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaranId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  logBayarId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  reversesId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+}).strict();
+
 export const IntFilterSchema: z.ZodType<Prisma.IntFilter> = z.object({
   equals: z.number().optional(),
   in: z.number().array().optional(),
@@ -11516,6 +11913,11 @@ export const FloatNullableFilterSchema: z.ZodType<Prisma.FloatNullableFilter> = 
   not: z.union([ z.number(),z.lazy(() => NestedFloatNullableFilterSchema) ]).optional().nullable(),
 }).strict();
 
+export const BoolFilterSchema: z.ZodType<Prisma.BoolFilter> = z.object({
+  equals: z.boolean().optional(),
+  not: z.union([ z.boolean(),z.lazy(() => NestedBoolFilterSchema) ]).optional(),
+}).strict();
+
 export const EnumRoleNameFilterSchema: z.ZodType<Prisma.EnumRoleNameFilter> = z.object({
   equals: z.lazy(() => RoleNameSchema).optional(),
   in: z.lazy(() => RoleNameSchema).array().optional(),
@@ -11542,11 +11944,6 @@ export const JsonNullableFilterSchema: z.ZodType<Prisma.JsonNullableFilter> = z.
 export const BoolNullableFilterSchema: z.ZodType<Prisma.BoolNullableFilter> = z.object({
   equals: z.boolean().optional().nullable(),
   not: z.union([ z.boolean(),z.lazy(() => NestedBoolNullableFilterSchema) ]).optional().nullable(),
-}).strict();
-
-export const BoolFilterSchema: z.ZodType<Prisma.BoolFilter> = z.object({
-  equals: z.boolean().optional(),
-  not: z.union([ z.boolean(),z.lazy(() => NestedBoolFilterSchema) ]).optional(),
 }).strict();
 
 export const DateTimeFilterSchema: z.ZodType<Prisma.DateTimeFilter> = z.object({
@@ -11710,6 +12107,12 @@ export const PenagihNullableRelationFilterSchema: z.ZodType<Prisma.PenagihNullab
   isNot: z.lazy(() => PenagihWhereInputSchema).optional().nullable(),
 }).strict();
 
+export const KomisiPetugasEntriListRelationFilterSchema: z.ZodType<Prisma.KomisiPetugasEntriListRelationFilter> = z.object({
+  every: z.lazy(() => KomisiPetugasEntriWhereInputSchema).optional(),
+  some: z.lazy(() => KomisiPetugasEntriWhereInputSchema).optional(),
+  none: z.lazy(() => KomisiPetugasEntriWhereInputSchema).optional(),
+}).strict();
+
 export const SortOrderInputSchema: z.ZodType<Prisma.SortOrderInput> = z.object({
   sort: z.lazy(() => SortOrderSchema),
   nulls: z.lazy(() => NullsOrderSchema).optional(),
@@ -11775,6 +12178,10 @@ export const PenagihOrderByRelationAggregateInputSchema: z.ZodType<Prisma.Penagi
   _count: z.lazy(() => SortOrderSchema).optional(),
 }).strict();
 
+export const KomisiPetugasEntriOrderByRelationAggregateInputSchema: z.ZodType<Prisma.KomisiPetugasEntriOrderByRelationAggregateInput> = z.object({
+  _count: z.lazy(() => SortOrderSchema).optional(),
+}).strict();
+
 export const UserCountOrderByAggregateInputSchema: z.ZodType<Prisma.UserCountOrderByAggregateInput> = z.object({
   id: z.lazy(() => SortOrderSchema).optional(),
   nama: z.lazy(() => SortOrderSchema).optional(),
@@ -11787,6 +12194,7 @@ export const UserCountOrderByAggregateInputSchema: z.ZodType<Prisma.UserCountOrd
   npwp: z.lazy(() => SortOrderSchema).optional(),
   omset: z.lazy(() => SortOrderSchema).optional(),
   ppn: z.lazy(() => SortOrderSchema).optional(),
+  ppnEnabled: z.lazy(() => SortOrderSchema).optional(),
   parentId: z.lazy(() => SortOrderSchema).optional(),
   nomor: z.lazy(() => SortOrderSchema).optional(),
   alamat: z.lazy(() => SortOrderSchema).optional(),
@@ -11837,6 +12245,7 @@ export const UserMaxOrderByAggregateInputSchema: z.ZodType<Prisma.UserMaxOrderBy
   npwp: z.lazy(() => SortOrderSchema).optional(),
   omset: z.lazy(() => SortOrderSchema).optional(),
   ppn: z.lazy(() => SortOrderSchema).optional(),
+  ppnEnabled: z.lazy(() => SortOrderSchema).optional(),
   parentId: z.lazy(() => SortOrderSchema).optional(),
   nomor: z.lazy(() => SortOrderSchema).optional(),
   alamat: z.lazy(() => SortOrderSchema).optional(),
@@ -11876,6 +12285,7 @@ export const UserMinOrderByAggregateInputSchema: z.ZodType<Prisma.UserMinOrderBy
   npwp: z.lazy(() => SortOrderSchema).optional(),
   omset: z.lazy(() => SortOrderSchema).optional(),
   ppn: z.lazy(() => SortOrderSchema).optional(),
+  ppnEnabled: z.lazy(() => SortOrderSchema).optional(),
   parentId: z.lazy(() => SortOrderSchema).optional(),
   nomor: z.lazy(() => SortOrderSchema).optional(),
   alamat: z.lazy(() => SortOrderSchema).optional(),
@@ -12005,6 +12415,14 @@ export const FloatNullableWithAggregatesFilterSchema: z.ZodType<Prisma.FloatNull
   _max: z.lazy(() => NestedFloatNullableFilterSchema).optional(),
 }).strict();
 
+export const BoolWithAggregatesFilterSchema: z.ZodType<Prisma.BoolWithAggregatesFilter> = z.object({
+  equals: z.boolean().optional(),
+  not: z.union([ z.boolean(),z.lazy(() => NestedBoolWithAggregatesFilterSchema) ]).optional(),
+  _count: z.lazy(() => NestedIntFilterSchema).optional(),
+  _min: z.lazy(() => NestedBoolFilterSchema).optional(),
+  _max: z.lazy(() => NestedBoolFilterSchema).optional(),
+}).strict();
+
 export const EnumRoleNameWithAggregatesFilterSchema: z.ZodType<Prisma.EnumRoleNameWithAggregatesFilter> = z.object({
   equals: z.lazy(() => RoleNameSchema).optional(),
   in: z.lazy(() => RoleNameSchema).array().optional(),
@@ -12040,14 +12458,6 @@ export const BoolNullableWithAggregatesFilterSchema: z.ZodType<Prisma.BoolNullab
   _count: z.lazy(() => NestedIntNullableFilterSchema).optional(),
   _min: z.lazy(() => NestedBoolNullableFilterSchema).optional(),
   _max: z.lazy(() => NestedBoolNullableFilterSchema).optional(),
-}).strict();
-
-export const BoolWithAggregatesFilterSchema: z.ZodType<Prisma.BoolWithAggregatesFilter> = z.object({
-  equals: z.boolean().optional(),
-  not: z.union([ z.boolean(),z.lazy(() => NestedBoolWithAggregatesFilterSchema) ]).optional(),
-  _count: z.lazy(() => NestedIntFilterSchema).optional(),
-  _min: z.lazy(() => NestedBoolFilterSchema).optional(),
-  _max: z.lazy(() => NestedBoolFilterSchema).optional(),
 }).strict();
 
 export const DateTimeWithAggregatesFilterSchema: z.ZodType<Prisma.DateTimeWithAggregatesFilter> = z.object({
@@ -13469,6 +13879,7 @@ export const PembayaranCountOrderByAggregateInputSchema: z.ZodType<Prisma.Pembay
   bankId: z.lazy(() => SortOrderSchema).optional(),
   metode: z.lazy(() => SortOrderSchema).optional(),
   nonaktif: z.lazy(() => SortOrderSchema).optional(),
+  bayarSekaligus: z.lazy(() => SortOrderSchema).optional(),
   status: z.lazy(() => SortOrderSchema).optional(),
   created: z.lazy(() => SortOrderSchema).optional(),
   updated: z.lazy(() => SortOrderSchema).optional(),
@@ -13481,6 +13892,7 @@ export const PembayaranAvgOrderByAggregateInputSchema: z.ZodType<Prisma.Pembayar
   paketId: z.lazy(() => SortOrderSchema).optional(),
   total: z.lazy(() => SortOrderSchema).optional(),
   bankId: z.lazy(() => SortOrderSchema).optional(),
+  bayarSekaligus: z.lazy(() => SortOrderSchema).optional(),
 }).strict();
 
 export const PembayaranMaxOrderByAggregateInputSchema: z.ZodType<Prisma.PembayaranMaxOrderByAggregateInput> = z.object({
@@ -13494,6 +13906,7 @@ export const PembayaranMaxOrderByAggregateInputSchema: z.ZodType<Prisma.Pembayar
   bankId: z.lazy(() => SortOrderSchema).optional(),
   metode: z.lazy(() => SortOrderSchema).optional(),
   nonaktif: z.lazy(() => SortOrderSchema).optional(),
+  bayarSekaligus: z.lazy(() => SortOrderSchema).optional(),
   status: z.lazy(() => SortOrderSchema).optional(),
   created: z.lazy(() => SortOrderSchema).optional(),
   updated: z.lazy(() => SortOrderSchema).optional(),
@@ -13510,6 +13923,7 @@ export const PembayaranMinOrderByAggregateInputSchema: z.ZodType<Prisma.Pembayar
   bankId: z.lazy(() => SortOrderSchema).optional(),
   metode: z.lazy(() => SortOrderSchema).optional(),
   nonaktif: z.lazy(() => SortOrderSchema).optional(),
+  bayarSekaligus: z.lazy(() => SortOrderSchema).optional(),
   status: z.lazy(() => SortOrderSchema).optional(),
   created: z.lazy(() => SortOrderSchema).optional(),
   updated: z.lazy(() => SortOrderSchema).optional(),
@@ -13522,6 +13936,7 @@ export const PembayaranSumOrderByAggregateInputSchema: z.ZodType<Prisma.Pembayar
   paketId: z.lazy(() => SortOrderSchema).optional(),
   total: z.lazy(() => SortOrderSchema).optional(),
   bankId: z.lazy(() => SortOrderSchema).optional(),
+  bayarSekaligus: z.lazy(() => SortOrderSchema).optional(),
 }).strict();
 
 export const EnumMetodeBayarNullableWithAggregatesFilterSchema: z.ZodType<Prisma.EnumMetodeBayarNullableWithAggregatesFilter> = z.object({
@@ -13542,6 +13957,11 @@ export const EnumStatusBayarWithAggregatesFilterSchema: z.ZodType<Prisma.EnumSta
   _count: z.lazy(() => NestedIntFilterSchema).optional(),
   _min: z.lazy(() => NestedEnumStatusBayarFilterSchema).optional(),
   _max: z.lazy(() => NestedEnumStatusBayarFilterSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriNullableRelationFilterSchema: z.ZodType<Prisma.KomisiPetugasEntriNullableRelationFilter> = z.object({
+  is: z.lazy(() => KomisiPetugasEntriWhereInputSchema).optional().nullable(),
+  isNot: z.lazy(() => KomisiPetugasEntriWhereInputSchema).optional().nullable(),
 }).strict();
 
 export const LogBayarCountOrderByAggregateInputSchema: z.ZodType<Prisma.LogBayarCountOrderByAggregateInput> = z.object({
@@ -14665,6 +15085,7 @@ export const PenagihCountOrderByAggregateInputSchema: z.ZodType<Prisma.PenagihCo
   nama: z.lazy(() => SortOrderSchema).optional(),
   nomor: z.lazy(() => SortOrderSchema).optional(),
   aktif: z.lazy(() => SortOrderSchema).optional(),
+  komisiNominal: z.lazy(() => SortOrderSchema).optional(),
   created: z.lazy(() => SortOrderSchema).optional(),
   updated: z.lazy(() => SortOrderSchema).optional(),
 }).strict();
@@ -14673,6 +15094,7 @@ export const PenagihAvgOrderByAggregateInputSchema: z.ZodType<Prisma.PenagihAvgO
   id: z.lazy(() => SortOrderSchema).optional(),
   ownerUserId: z.lazy(() => SortOrderSchema).optional(),
   userId: z.lazy(() => SortOrderSchema).optional(),
+  komisiNominal: z.lazy(() => SortOrderSchema).optional(),
 }).strict();
 
 export const PenagihMaxOrderByAggregateInputSchema: z.ZodType<Prisma.PenagihMaxOrderByAggregateInput> = z.object({
@@ -14682,6 +15104,7 @@ export const PenagihMaxOrderByAggregateInputSchema: z.ZodType<Prisma.PenagihMaxO
   nama: z.lazy(() => SortOrderSchema).optional(),
   nomor: z.lazy(() => SortOrderSchema).optional(),
   aktif: z.lazy(() => SortOrderSchema).optional(),
+  komisiNominal: z.lazy(() => SortOrderSchema).optional(),
   created: z.lazy(() => SortOrderSchema).optional(),
   updated: z.lazy(() => SortOrderSchema).optional(),
 }).strict();
@@ -14693,6 +15116,7 @@ export const PenagihMinOrderByAggregateInputSchema: z.ZodType<Prisma.PenagihMinO
   nama: z.lazy(() => SortOrderSchema).optional(),
   nomor: z.lazy(() => SortOrderSchema).optional(),
   aktif: z.lazy(() => SortOrderSchema).optional(),
+  komisiNominal: z.lazy(() => SortOrderSchema).optional(),
   created: z.lazy(() => SortOrderSchema).optional(),
   updated: z.lazy(() => SortOrderSchema).optional(),
 }).strict();
@@ -14701,6 +15125,7 @@ export const PenagihSumOrderByAggregateInputSchema: z.ZodType<Prisma.PenagihSumO
   id: z.lazy(() => SortOrderSchema).optional(),
   ownerUserId: z.lazy(() => SortOrderSchema).optional(),
   userId: z.lazy(() => SortOrderSchema).optional(),
+  komisiNominal: z.lazy(() => SortOrderSchema).optional(),
 }).strict();
 
 export const PenagihRelationFilterSchema: z.ZodType<Prisma.PenagihRelationFilter> = z.object({
@@ -14793,6 +15218,74 @@ export const PenagihPenugasanLogSumOrderByAggregateInputSchema: z.ZodType<Prisma
   dariPenagihId: z.lazy(() => SortOrderSchema).optional(),
   kePenagihId: z.lazy(() => SortOrderSchema).optional(),
   actorUserId: z.lazy(() => SortOrderSchema).optional(),
+}).strict();
+
+export const LogBayarNullableRelationFilterSchema: z.ZodType<Prisma.LogBayarNullableRelationFilter> = z.object({
+  is: z.lazy(() => LogBayarWhereInputSchema).optional().nullable(),
+  isNot: z.lazy(() => LogBayarWhereInputSchema).optional().nullable(),
+}).strict();
+
+export const KomisiPetugasEntriCountOrderByAggregateInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCountOrderByAggregateInput> = z.object({
+  id: z.lazy(() => SortOrderSchema).optional(),
+  ownerUserId: z.lazy(() => SortOrderSchema).optional(),
+  penagihId: z.lazy(() => SortOrderSchema).optional(),
+  actorUserId: z.lazy(() => SortOrderSchema).optional(),
+  pelangganId: z.lazy(() => SortOrderSchema).optional(),
+  pembayaranId: z.lazy(() => SortOrderSchema).optional(),
+  logBayarId: z.lazy(() => SortOrderSchema).optional(),
+  reversesId: z.lazy(() => SortOrderSchema).optional(),
+  nominal: z.lazy(() => SortOrderSchema).optional(),
+  created: z.lazy(() => SortOrderSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriAvgOrderByAggregateInputSchema: z.ZodType<Prisma.KomisiPetugasEntriAvgOrderByAggregateInput> = z.object({
+  id: z.lazy(() => SortOrderSchema).optional(),
+  ownerUserId: z.lazy(() => SortOrderSchema).optional(),
+  penagihId: z.lazy(() => SortOrderSchema).optional(),
+  actorUserId: z.lazy(() => SortOrderSchema).optional(),
+  pelangganId: z.lazy(() => SortOrderSchema).optional(),
+  pembayaranId: z.lazy(() => SortOrderSchema).optional(),
+  logBayarId: z.lazy(() => SortOrderSchema).optional(),
+  reversesId: z.lazy(() => SortOrderSchema).optional(),
+  nominal: z.lazy(() => SortOrderSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriMaxOrderByAggregateInputSchema: z.ZodType<Prisma.KomisiPetugasEntriMaxOrderByAggregateInput> = z.object({
+  id: z.lazy(() => SortOrderSchema).optional(),
+  ownerUserId: z.lazy(() => SortOrderSchema).optional(),
+  penagihId: z.lazy(() => SortOrderSchema).optional(),
+  actorUserId: z.lazy(() => SortOrderSchema).optional(),
+  pelangganId: z.lazy(() => SortOrderSchema).optional(),
+  pembayaranId: z.lazy(() => SortOrderSchema).optional(),
+  logBayarId: z.lazy(() => SortOrderSchema).optional(),
+  reversesId: z.lazy(() => SortOrderSchema).optional(),
+  nominal: z.lazy(() => SortOrderSchema).optional(),
+  created: z.lazy(() => SortOrderSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriMinOrderByAggregateInputSchema: z.ZodType<Prisma.KomisiPetugasEntriMinOrderByAggregateInput> = z.object({
+  id: z.lazy(() => SortOrderSchema).optional(),
+  ownerUserId: z.lazy(() => SortOrderSchema).optional(),
+  penagihId: z.lazy(() => SortOrderSchema).optional(),
+  actorUserId: z.lazy(() => SortOrderSchema).optional(),
+  pelangganId: z.lazy(() => SortOrderSchema).optional(),
+  pembayaranId: z.lazy(() => SortOrderSchema).optional(),
+  logBayarId: z.lazy(() => SortOrderSchema).optional(),
+  reversesId: z.lazy(() => SortOrderSchema).optional(),
+  nominal: z.lazy(() => SortOrderSchema).optional(),
+  created: z.lazy(() => SortOrderSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriSumOrderByAggregateInputSchema: z.ZodType<Prisma.KomisiPetugasEntriSumOrderByAggregateInput> = z.object({
+  id: z.lazy(() => SortOrderSchema).optional(),
+  ownerUserId: z.lazy(() => SortOrderSchema).optional(),
+  penagihId: z.lazy(() => SortOrderSchema).optional(),
+  actorUserId: z.lazy(() => SortOrderSchema).optional(),
+  pelangganId: z.lazy(() => SortOrderSchema).optional(),
+  pembayaranId: z.lazy(() => SortOrderSchema).optional(),
+  logBayarId: z.lazy(() => SortOrderSchema).optional(),
+  reversesId: z.lazy(() => SortOrderSchema).optional(),
+  nominal: z.lazy(() => SortOrderSchema).optional(),
 }).strict();
 
 export const UserCreateNestedOneWithoutChildsInputSchema: z.ZodType<Prisma.UserCreateNestedOneWithoutChildsInput> = z.object({
@@ -14949,6 +15442,13 @@ export const PenagihCreateNestedOneWithoutAkunInputSchema: z.ZodType<Prisma.Pena
   connect: z.lazy(() => PenagihWhereUniqueInputSchema).optional(),
 }).strict();
 
+export const KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateNestedManyWithoutActorInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutActorInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutActorInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutActorInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyActorInputEnvelopeSchema).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+}).strict();
+
 export const UserUncheckedCreateNestedManyWithoutParentInputSchema: z.ZodType<Prisma.UserUncheckedCreateNestedManyWithoutParentInput> = z.object({
   create: z.union([ z.lazy(() => UserCreateWithoutParentInputSchema), z.lazy(() => UserCreateWithoutParentInputSchema).array(), z.lazy(() => UserUncheckedCreateWithoutParentInputSchema), z.lazy(() => UserUncheckedCreateWithoutParentInputSchema).array() ]).optional(),
   connectOrCreate: z.union([ z.lazy(() => UserCreateOrConnectWithoutParentInputSchema), z.lazy(() => UserCreateOrConnectWithoutParentInputSchema).array() ]).optional(),
@@ -15097,6 +15597,13 @@ export const PenagihUncheckedCreateNestedOneWithoutAkunInputSchema: z.ZodType<Pr
   connect: z.lazy(() => PenagihWhereUniqueInputSchema).optional(),
 }).strict();
 
+export const KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutActorInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutActorInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutActorInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyActorInputEnvelopeSchema).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+}).strict();
+
 export const StringFieldUpdateOperationsInputSchema: z.ZodType<Prisma.StringFieldUpdateOperationsInput> = z.object({
   set: z.string().optional(),
 }).strict();
@@ -15125,16 +15632,16 @@ export const NullableFloatFieldUpdateOperationsInputSchema: z.ZodType<Prisma.Nul
   divide: z.number().optional(),
 }).strict();
 
+export const BoolFieldUpdateOperationsInputSchema: z.ZodType<Prisma.BoolFieldUpdateOperationsInput> = z.object({
+  set: z.boolean().optional(),
+}).strict();
+
 export const EnumRoleNameFieldUpdateOperationsInputSchema: z.ZodType<Prisma.EnumRoleNameFieldUpdateOperationsInput> = z.object({
   set: z.lazy(() => RoleNameSchema).optional(),
 }).strict();
 
 export const NullableBoolFieldUpdateOperationsInputSchema: z.ZodType<Prisma.NullableBoolFieldUpdateOperationsInput> = z.object({
   set: z.boolean().optional().nullable(),
-}).strict();
-
-export const BoolFieldUpdateOperationsInputSchema: z.ZodType<Prisma.BoolFieldUpdateOperationsInput> = z.object({
-  set: z.boolean().optional(),
 }).strict();
 
 export const DateTimeFieldUpdateOperationsInputSchema: z.ZodType<Prisma.DateTimeFieldUpdateOperationsInput> = z.object({
@@ -15447,6 +15954,20 @@ export const PenagihUpdateOneWithoutAkunNestedInputSchema: z.ZodType<Prisma.Pena
   update: z.union([ z.lazy(() => PenagihUpdateToOneWithWhereWithoutAkunInputSchema), z.lazy(() => PenagihUpdateWithoutAkunInputSchema), z.lazy(() => PenagihUncheckedUpdateWithoutAkunInputSchema) ]).optional(),
 }).strict();
 
+export const KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateManyWithoutActorNestedInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutActorInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutActorInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutActorInputSchema).array() ]).optional(),
+  upsert: z.union([ z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutActorInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyActorInputEnvelopeSchema).optional(),
+  set: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  disconnect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  delete: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutActorInputSchema).array() ]).optional(),
+  updateMany: z.union([ z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutActorInputSchema).array() ]).optional(),
+  deleteMany: z.union([ z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema), z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema).array() ]).optional(),
+}).strict();
+
 export const IntFieldUpdateOperationsInputSchema: z.ZodType<Prisma.IntFieldUpdateOperationsInput> = z.object({
   set: z.number().optional(),
   increment: z.number().optional(),
@@ -15737,6 +16258,20 @@ export const PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema: z.ZodType<Pr
   delete: z.union([ z.boolean(),z.lazy(() => PenagihWhereInputSchema) ]).optional(),
   connect: z.lazy(() => PenagihWhereUniqueInputSchema).optional(),
   update: z.union([ z.lazy(() => PenagihUpdateToOneWithWhereWithoutAkunInputSchema), z.lazy(() => PenagihUpdateWithoutAkunInputSchema), z.lazy(() => PenagihUncheckedUpdateWithoutAkunInputSchema) ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutActorInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutActorInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutActorInputSchema).array() ]).optional(),
+  upsert: z.union([ z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutActorInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyActorInputEnvelopeSchema).optional(),
+  set: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  disconnect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  delete: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutActorInputSchema).array() ]).optional(),
+  updateMany: z.union([ z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutActorInputSchema).array() ]).optional(),
+  deleteMany: z.union([ z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema), z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema).array() ]).optional(),
 }).strict();
 
 export const PortalBersamaMitraCreateNestedManyWithoutPortalInputSchema: z.ZodType<Prisma.PortalBersamaMitraCreateNestedManyWithoutPortalInput> = z.object({
@@ -16280,6 +16815,13 @@ export const PenagihPenugasanLogCreateNestedManyWithoutPelangganInputSchema: z.Z
   connect: z.union([ z.lazy(() => PenagihPenugasanLogWhereUniqueInputSchema), z.lazy(() => PenagihPenugasanLogWhereUniqueInputSchema).array() ]).optional(),
 }).strict();
 
+export const KomisiPetugasEntriCreateNestedManyWithoutPelangganInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateNestedManyWithoutPelangganInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutPelangganInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPelangganInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPelangganInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyPelangganInputEnvelopeSchema).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+}).strict();
+
 export const PembayaranUncheckedCreateNestedManyWithoutPelangganInputSchema: z.ZodType<Prisma.PembayaranUncheckedCreateNestedManyWithoutPelangganInput> = z.object({
   create: z.union([ z.lazy(() => PembayaranCreateWithoutPelangganInputSchema), z.lazy(() => PembayaranCreateWithoutPelangganInputSchema).array(), z.lazy(() => PembayaranUncheckedCreateWithoutPelangganInputSchema), z.lazy(() => PembayaranUncheckedCreateWithoutPelangganInputSchema).array() ]).optional(),
   connectOrCreate: z.union([ z.lazy(() => PembayaranCreateOrConnectWithoutPelangganInputSchema), z.lazy(() => PembayaranCreateOrConnectWithoutPelangganInputSchema).array() ]).optional(),
@@ -16333,6 +16875,13 @@ export const PenagihPenugasanLogUncheckedCreateNestedManyWithoutPelangganInputSc
   connectOrCreate: z.union([ z.lazy(() => PenagihPenugasanLogCreateOrConnectWithoutPelangganInputSchema), z.lazy(() => PenagihPenugasanLogCreateOrConnectWithoutPelangganInputSchema).array() ]).optional(),
   createMany: z.lazy(() => PenagihPenugasanLogCreateManyPelangganInputEnvelopeSchema).optional(),
   connect: z.union([ z.lazy(() => PenagihPenugasanLogWhereUniqueInputSchema), z.lazy(() => PenagihPenugasanLogWhereUniqueInputSchema).array() ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutPelangganInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPelangganInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPelangganInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyPelangganInputEnvelopeSchema).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
 }).strict();
 
 export const PppSecretUpdateOneWithoutPelangganNestedInputSchema: z.ZodType<Prisma.PppSecretUpdateOneWithoutPelangganNestedInput> = z.object({
@@ -16469,6 +17018,20 @@ export const PenagihPenugasanLogUpdateManyWithoutPelangganNestedInputSchema: z.Z
   deleteMany: z.union([ z.lazy(() => PenagihPenugasanLogScalarWhereInputSchema), z.lazy(() => PenagihPenugasanLogScalarWhereInputSchema).array() ]).optional(),
 }).strict();
 
+export const KomisiPetugasEntriUpdateManyWithoutPelangganNestedInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateManyWithoutPelangganNestedInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutPelangganInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPelangganInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPelangganInputSchema).array() ]).optional(),
+  upsert: z.union([ z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutPelangganInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyPelangganInputEnvelopeSchema).optional(),
+  set: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  disconnect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  delete: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutPelangganInputSchema).array() ]).optional(),
+  updateMany: z.union([ z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutPelangganInputSchema).array() ]).optional(),
+  deleteMany: z.union([ z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema), z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema).array() ]).optional(),
+}).strict();
+
 export const PembayaranUncheckedUpdateManyWithoutPelangganNestedInputSchema: z.ZodType<Prisma.PembayaranUncheckedUpdateManyWithoutPelangganNestedInput> = z.object({
   create: z.union([ z.lazy(() => PembayaranCreateWithoutPelangganInputSchema), z.lazy(() => PembayaranCreateWithoutPelangganInputSchema).array(), z.lazy(() => PembayaranUncheckedCreateWithoutPelangganInputSchema), z.lazy(() => PembayaranUncheckedCreateWithoutPelangganInputSchema).array() ]).optional(),
   connectOrCreate: z.union([ z.lazy(() => PembayaranCreateOrConnectWithoutPelangganInputSchema), z.lazy(() => PembayaranCreateOrConnectWithoutPelangganInputSchema).array() ]).optional(),
@@ -16575,6 +17138,20 @@ export const PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganNestedInputSc
   update: z.union([ z.lazy(() => PenagihPenugasanLogUpdateWithWhereUniqueWithoutPelangganInputSchema), z.lazy(() => PenagihPenugasanLogUpdateWithWhereUniqueWithoutPelangganInputSchema).array() ]).optional(),
   updateMany: z.union([ z.lazy(() => PenagihPenugasanLogUpdateManyWithWhereWithoutPelangganInputSchema), z.lazy(() => PenagihPenugasanLogUpdateManyWithWhereWithoutPelangganInputSchema).array() ]).optional(),
   deleteMany: z.union([ z.lazy(() => PenagihPenugasanLogScalarWhereInputSchema), z.lazy(() => PenagihPenugasanLogScalarWhereInputSchema).array() ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutPelangganInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPelangganInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPelangganInputSchema).array() ]).optional(),
+  upsert: z.union([ z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutPelangganInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyPelangganInputEnvelopeSchema).optional(),
+  set: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  disconnect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  delete: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutPelangganInputSchema).array() ]).optional(),
+  updateMany: z.union([ z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutPelangganInputSchema).array() ]).optional(),
+  deleteMany: z.union([ z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema), z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema).array() ]).optional(),
 }).strict();
 
 export const UserCreateNestedOneWithoutStaffPelangganScopesInputSchema: z.ZodType<Prisma.UserCreateNestedOneWithoutStaffPelangganScopesInput> = z.object({
@@ -17144,6 +17721,13 @@ export const LogBayarCreateNestedManyWithoutPembayaranInputSchema: z.ZodType<Pri
   connect: z.union([ z.lazy(() => LogBayarWhereUniqueInputSchema), z.lazy(() => LogBayarWhereUniqueInputSchema).array() ]).optional(),
 }).strict();
 
+export const KomisiPetugasEntriCreateNestedManyWithoutPembayaranInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateNestedManyWithoutPembayaranInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutPembayaranInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPembayaranInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPembayaranInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyPembayaranInputEnvelopeSchema).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+}).strict();
+
 export const TripayTransaksiCreateNestedManyWithoutPembayaranInputSchema: z.ZodType<Prisma.TripayTransaksiCreateNestedManyWithoutPembayaranInput> = z.object({
   create: z.union([ z.lazy(() => TripayTransaksiCreateWithoutPembayaranInputSchema), z.lazy(() => TripayTransaksiCreateWithoutPembayaranInputSchema).array(), z.lazy(() => TripayTransaksiUncheckedCreateWithoutPembayaranInputSchema), z.lazy(() => TripayTransaksiUncheckedCreateWithoutPembayaranInputSchema).array() ]).optional(),
   connectOrCreate: z.union([ z.lazy(() => TripayTransaksiCreateOrConnectWithoutPembayaranInputSchema), z.lazy(() => TripayTransaksiCreateOrConnectWithoutPembayaranInputSchema).array() ]).optional(),
@@ -17163,6 +17747,13 @@ export const LogBayarUncheckedCreateNestedManyWithoutPembayaranInputSchema: z.Zo
   connectOrCreate: z.union([ z.lazy(() => LogBayarCreateOrConnectWithoutPembayaranInputSchema), z.lazy(() => LogBayarCreateOrConnectWithoutPembayaranInputSchema).array() ]).optional(),
   createMany: z.lazy(() => LogBayarCreateManyPembayaranInputEnvelopeSchema).optional(),
   connect: z.union([ z.lazy(() => LogBayarWhereUniqueInputSchema), z.lazy(() => LogBayarWhereUniqueInputSchema).array() ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedCreateNestedManyWithoutPembayaranInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateNestedManyWithoutPembayaranInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutPembayaranInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPembayaranInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPembayaranInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyPembayaranInputEnvelopeSchema).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
 }).strict();
 
 export const TripayTransaksiUncheckedCreateNestedManyWithoutPembayaranInputSchema: z.ZodType<Prisma.TripayTransaksiUncheckedCreateNestedManyWithoutPembayaranInput> = z.object({
@@ -17227,6 +17818,20 @@ export const LogBayarUpdateManyWithoutPembayaranNestedInputSchema: z.ZodType<Pri
   deleteMany: z.union([ z.lazy(() => LogBayarScalarWhereInputSchema), z.lazy(() => LogBayarScalarWhereInputSchema).array() ]).optional(),
 }).strict();
 
+export const KomisiPetugasEntriUpdateManyWithoutPembayaranNestedInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateManyWithoutPembayaranNestedInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutPembayaranInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPembayaranInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPembayaranInputSchema).array() ]).optional(),
+  upsert: z.union([ z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutPembayaranInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyPembayaranInputEnvelopeSchema).optional(),
+  set: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  disconnect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  delete: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutPembayaranInputSchema).array() ]).optional(),
+  updateMany: z.union([ z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutPembayaranInputSchema).array() ]).optional(),
+  deleteMany: z.union([ z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema), z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema).array() ]).optional(),
+}).strict();
+
 export const TripayTransaksiUpdateManyWithoutPembayaranNestedInputSchema: z.ZodType<Prisma.TripayTransaksiUpdateManyWithoutPembayaranNestedInput> = z.object({
   create: z.union([ z.lazy(() => TripayTransaksiCreateWithoutPembayaranInputSchema), z.lazy(() => TripayTransaksiCreateWithoutPembayaranInputSchema).array(), z.lazy(() => TripayTransaksiUncheckedCreateWithoutPembayaranInputSchema), z.lazy(() => TripayTransaksiUncheckedCreateWithoutPembayaranInputSchema).array() ]).optional(),
   connectOrCreate: z.union([ z.lazy(() => TripayTransaksiCreateOrConnectWithoutPembayaranInputSchema), z.lazy(() => TripayTransaksiCreateOrConnectWithoutPembayaranInputSchema).array() ]).optional(),
@@ -17269,6 +17874,20 @@ export const LogBayarUncheckedUpdateManyWithoutPembayaranNestedInputSchema: z.Zo
   deleteMany: z.union([ z.lazy(() => LogBayarScalarWhereInputSchema), z.lazy(() => LogBayarScalarWhereInputSchema).array() ]).optional(),
 }).strict();
 
+export const KomisiPetugasEntriUncheckedUpdateManyWithoutPembayaranNestedInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateManyWithoutPembayaranNestedInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutPembayaranInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPembayaranInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPembayaranInputSchema).array() ]).optional(),
+  upsert: z.union([ z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutPembayaranInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyPembayaranInputEnvelopeSchema).optional(),
+  set: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  disconnect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  delete: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutPembayaranInputSchema).array() ]).optional(),
+  updateMany: z.union([ z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutPembayaranInputSchema).array() ]).optional(),
+  deleteMany: z.union([ z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema), z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema).array() ]).optional(),
+}).strict();
+
 export const TripayTransaksiUncheckedUpdateManyWithoutPembayaranNestedInputSchema: z.ZodType<Prisma.TripayTransaksiUncheckedUpdateManyWithoutPembayaranNestedInput> = z.object({
   create: z.union([ z.lazy(() => TripayTransaksiCreateWithoutPembayaranInputSchema), z.lazy(() => TripayTransaksiCreateWithoutPembayaranInputSchema).array(), z.lazy(() => TripayTransaksiUncheckedCreateWithoutPembayaranInputSchema), z.lazy(() => TripayTransaksiUncheckedCreateWithoutPembayaranInputSchema).array() ]).optional(),
   connectOrCreate: z.union([ z.lazy(() => TripayTransaksiCreateOrConnectWithoutPembayaranInputSchema), z.lazy(() => TripayTransaksiCreateOrConnectWithoutPembayaranInputSchema).array() ]).optional(),
@@ -17309,6 +17928,18 @@ export const UserCreateNestedOneWithoutLog_bayarInputSchema: z.ZodType<Prisma.Us
   connect: z.lazy(() => UserWhereUniqueInputSchema).optional(),
 }).strict();
 
+export const KomisiPetugasEntriCreateNestedOneWithoutLogBayarInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateNestedOneWithoutLogBayarInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutLogBayarInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutLogBayarInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutLogBayarInputSchema).optional(),
+  connect: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedCreateNestedOneWithoutLogBayarInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateNestedOneWithoutLogBayarInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutLogBayarInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutLogBayarInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutLogBayarInputSchema).optional(),
+  connect: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).optional(),
+}).strict();
+
 export const PembayaranUpdateOneRequiredWithoutLogNestedInputSchema: z.ZodType<Prisma.PembayaranUpdateOneRequiredWithoutLogNestedInput> = z.object({
   create: z.union([ z.lazy(() => PembayaranCreateWithoutLogInputSchema), z.lazy(() => PembayaranUncheckedCreateWithoutLogInputSchema) ]).optional(),
   connectOrCreate: z.lazy(() => PembayaranCreateOrConnectWithoutLogInputSchema).optional(),
@@ -17323,6 +17954,26 @@ export const UserUpdateOneRequiredWithoutLog_bayarNestedInputSchema: z.ZodType<P
   upsert: z.lazy(() => UserUpsertWithoutLog_bayarInputSchema).optional(),
   connect: z.lazy(() => UserWhereUniqueInputSchema).optional(),
   update: z.union([ z.lazy(() => UserUpdateToOneWithWhereWithoutLog_bayarInputSchema), z.lazy(() => UserUpdateWithoutLog_bayarInputSchema), z.lazy(() => UserUncheckedUpdateWithoutLog_bayarInputSchema) ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpdateOneWithoutLogBayarNestedInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateOneWithoutLogBayarNestedInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutLogBayarInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutLogBayarInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutLogBayarInputSchema).optional(),
+  upsert: z.lazy(() => KomisiPetugasEntriUpsertWithoutLogBayarInputSchema).optional(),
+  disconnect: z.union([ z.boolean(),z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional(),
+  delete: z.union([ z.boolean(),z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional(),
+  connect: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).optional(),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateToOneWithWhereWithoutLogBayarInputSchema), z.lazy(() => KomisiPetugasEntriUpdateWithoutLogBayarInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutLogBayarInputSchema) ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateOneWithoutLogBayarNestedInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateOneWithoutLogBayarNestedInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutLogBayarInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutLogBayarInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutLogBayarInputSchema).optional(),
+  upsert: z.lazy(() => KomisiPetugasEntriUpsertWithoutLogBayarInputSchema).optional(),
+  disconnect: z.union([ z.boolean(),z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional(),
+  delete: z.union([ z.boolean(),z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional(),
+  connect: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).optional(),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateToOneWithWhereWithoutLogBayarInputSchema), z.lazy(() => KomisiPetugasEntriUpdateWithoutLogBayarInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutLogBayarInputSchema) ]).optional(),
 }).strict();
 
 export const UserCreateNestedOneWithoutPembayaran_mitraInputSchema: z.ZodType<Prisma.UserCreateNestedOneWithoutPembayaran_mitraInput> = z.object({
@@ -17802,6 +18453,13 @@ export const PenagihPenugasanLogCreateNestedManyWithoutKePenagihInputSchema: z.Z
   connect: z.union([ z.lazy(() => PenagihPenugasanLogWhereUniqueInputSchema), z.lazy(() => PenagihPenugasanLogWhereUniqueInputSchema).array() ]).optional(),
 }).strict();
 
+export const KomisiPetugasEntriCreateNestedManyWithoutPenagihInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateNestedManyWithoutPenagihInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutPenagihInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPenagihInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPenagihInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyPenagihInputEnvelopeSchema).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+}).strict();
+
 export const PenagihPenugasanUncheckedCreateNestedManyWithoutPenagihInputSchema: z.ZodType<Prisma.PenagihPenugasanUncheckedCreateNestedManyWithoutPenagihInput> = z.object({
   create: z.union([ z.lazy(() => PenagihPenugasanCreateWithoutPenagihInputSchema), z.lazy(() => PenagihPenugasanCreateWithoutPenagihInputSchema).array(), z.lazy(() => PenagihPenugasanUncheckedCreateWithoutPenagihInputSchema), z.lazy(() => PenagihPenugasanUncheckedCreateWithoutPenagihInputSchema).array() ]).optional(),
   connectOrCreate: z.union([ z.lazy(() => PenagihPenugasanCreateOrConnectWithoutPenagihInputSchema), z.lazy(() => PenagihPenugasanCreateOrConnectWithoutPenagihInputSchema).array() ]).optional(),
@@ -17821,6 +18479,13 @@ export const PenagihPenugasanLogUncheckedCreateNestedManyWithoutKePenagihInputSc
   connectOrCreate: z.union([ z.lazy(() => PenagihPenugasanLogCreateOrConnectWithoutKePenagihInputSchema), z.lazy(() => PenagihPenugasanLogCreateOrConnectWithoutKePenagihInputSchema).array() ]).optional(),
   createMany: z.lazy(() => PenagihPenugasanLogCreateManyKePenagihInputEnvelopeSchema).optional(),
   connect: z.union([ z.lazy(() => PenagihPenugasanLogWhereUniqueInputSchema), z.lazy(() => PenagihPenugasanLogWhereUniqueInputSchema).array() ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedCreateNestedManyWithoutPenagihInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateNestedManyWithoutPenagihInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutPenagihInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPenagihInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPenagihInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyPenagihInputEnvelopeSchema).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
 }).strict();
 
 export const UserUpdateOneRequiredWithoutPenagihNestedInputSchema: z.ZodType<Prisma.UserUpdateOneRequiredWithoutPenagihNestedInput> = z.object({
@@ -17883,6 +18548,20 @@ export const PenagihPenugasanLogUpdateManyWithoutKePenagihNestedInputSchema: z.Z
   deleteMany: z.union([ z.lazy(() => PenagihPenugasanLogScalarWhereInputSchema), z.lazy(() => PenagihPenugasanLogScalarWhereInputSchema).array() ]).optional(),
 }).strict();
 
+export const KomisiPetugasEntriUpdateManyWithoutPenagihNestedInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateManyWithoutPenagihNestedInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutPenagihInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPenagihInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPenagihInputSchema).array() ]).optional(),
+  upsert: z.union([ z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutPenagihInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyPenagihInputEnvelopeSchema).optional(),
+  set: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  disconnect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  delete: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutPenagihInputSchema).array() ]).optional(),
+  updateMany: z.union([ z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutPenagihInputSchema).array() ]).optional(),
+  deleteMany: z.union([ z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema), z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema).array() ]).optional(),
+}).strict();
+
 export const PenagihPenugasanUncheckedUpdateManyWithoutPenagihNestedInputSchema: z.ZodType<Prisma.PenagihPenugasanUncheckedUpdateManyWithoutPenagihNestedInput> = z.object({
   create: z.union([ z.lazy(() => PenagihPenugasanCreateWithoutPenagihInputSchema), z.lazy(() => PenagihPenugasanCreateWithoutPenagihInputSchema).array(), z.lazy(() => PenagihPenugasanUncheckedCreateWithoutPenagihInputSchema), z.lazy(() => PenagihPenugasanUncheckedCreateWithoutPenagihInputSchema).array() ]).optional(),
   connectOrCreate: z.union([ z.lazy(() => PenagihPenugasanCreateOrConnectWithoutPenagihInputSchema), z.lazy(() => PenagihPenugasanCreateOrConnectWithoutPenagihInputSchema).array() ]).optional(),
@@ -17923,6 +18602,20 @@ export const PenagihPenugasanLogUncheckedUpdateManyWithoutKePenagihNestedInputSc
   update: z.union([ z.lazy(() => PenagihPenugasanLogUpdateWithWhereUniqueWithoutKePenagihInputSchema), z.lazy(() => PenagihPenugasanLogUpdateWithWhereUniqueWithoutKePenagihInputSchema).array() ]).optional(),
   updateMany: z.union([ z.lazy(() => PenagihPenugasanLogUpdateManyWithWhereWithoutKePenagihInputSchema), z.lazy(() => PenagihPenugasanLogUpdateManyWithWhereWithoutKePenagihInputSchema).array() ]).optional(),
   deleteMany: z.union([ z.lazy(() => PenagihPenugasanLogScalarWhereInputSchema), z.lazy(() => PenagihPenugasanLogScalarWhereInputSchema).array() ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateManyWithoutPenagihNestedInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateManyWithoutPenagihNestedInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriCreateWithoutPenagihInputSchema).array(), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPenagihInputSchema).array() ]).optional(),
+  connectOrCreate: z.union([ z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutPenagihInputSchema).array() ]).optional(),
+  upsert: z.union([ z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUpsertWithWhereUniqueWithoutPenagihInputSchema).array() ]).optional(),
+  createMany: z.lazy(() => KomisiPetugasEntriCreateManyPenagihInputEnvelopeSchema).optional(),
+  set: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  disconnect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  delete: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  connect: z.union([ z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema), z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).array() ]).optional(),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUpdateWithWhereUniqueWithoutPenagihInputSchema).array() ]).optional(),
+  updateMany: z.union([ z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUpdateManyWithWhereWithoutPenagihInputSchema).array() ]).optional(),
+  deleteMany: z.union([ z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema), z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema).array() ]).optional(),
 }).strict();
 
 export const PelangganCreateNestedOneWithoutPenagihPenugasanInputSchema: z.ZodType<Prisma.PelangganCreateNestedOneWithoutPenagihPenugasanInput> = z.object({
@@ -17999,6 +18692,126 @@ export const PenagihUpdateOneWithoutLogKeNestedInputSchema: z.ZodType<Prisma.Pen
   update: z.union([ z.lazy(() => PenagihUpdateToOneWithWhereWithoutLogKeInputSchema), z.lazy(() => PenagihUpdateWithoutLogKeInputSchema), z.lazy(() => PenagihUncheckedUpdateWithoutLogKeInputSchema) ]).optional(),
 }).strict();
 
+export const PenagihCreateNestedOneWithoutKomisiInputSchema: z.ZodType<Prisma.PenagihCreateNestedOneWithoutKomisiInput> = z.object({
+  create: z.union([ z.lazy(() => PenagihCreateWithoutKomisiInputSchema), z.lazy(() => PenagihUncheckedCreateWithoutKomisiInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => PenagihCreateOrConnectWithoutKomisiInputSchema).optional(),
+  connect: z.lazy(() => PenagihWhereUniqueInputSchema).optional(),
+}).strict();
+
+export const UserCreateNestedOneWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.UserCreateNestedOneWithoutKomisiPetugasInput> = z.object({
+  create: z.union([ z.lazy(() => UserCreateWithoutKomisiPetugasInputSchema), z.lazy(() => UserUncheckedCreateWithoutKomisiPetugasInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => UserCreateOrConnectWithoutKomisiPetugasInputSchema).optional(),
+  connect: z.lazy(() => UserWhereUniqueInputSchema).optional(),
+}).strict();
+
+export const PelangganCreateNestedOneWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PelangganCreateNestedOneWithoutKomisiPetugasInput> = z.object({
+  create: z.union([ z.lazy(() => PelangganCreateWithoutKomisiPetugasInputSchema), z.lazy(() => PelangganUncheckedCreateWithoutKomisiPetugasInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => PelangganCreateOrConnectWithoutKomisiPetugasInputSchema).optional(),
+  connect: z.lazy(() => PelangganWhereUniqueInputSchema).optional(),
+}).strict();
+
+export const PembayaranCreateNestedOneWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PembayaranCreateNestedOneWithoutKomisiPetugasInput> = z.object({
+  create: z.union([ z.lazy(() => PembayaranCreateWithoutKomisiPetugasInputSchema), z.lazy(() => PembayaranUncheckedCreateWithoutKomisiPetugasInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => PembayaranCreateOrConnectWithoutKomisiPetugasInputSchema).optional(),
+  connect: z.lazy(() => PembayaranWhereUniqueInputSchema).optional(),
+}).strict();
+
+export const LogBayarCreateNestedOneWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.LogBayarCreateNestedOneWithoutKomisiPetugasInput> = z.object({
+  create: z.union([ z.lazy(() => LogBayarCreateWithoutKomisiPetugasInputSchema), z.lazy(() => LogBayarUncheckedCreateWithoutKomisiPetugasInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => LogBayarCreateOrConnectWithoutKomisiPetugasInputSchema).optional(),
+  connect: z.lazy(() => LogBayarWhereUniqueInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriCreateNestedOneWithoutReversedByInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateNestedOneWithoutReversedByInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutReversedByInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutReversedByInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutReversedByInputSchema).optional(),
+  connect: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriCreateNestedOneWithoutReversesInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateNestedOneWithoutReversesInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutReversesInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutReversesInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutReversesInputSchema).optional(),
+  connect: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedCreateNestedOneWithoutReversesInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateNestedOneWithoutReversesInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutReversesInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutReversesInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutReversesInputSchema).optional(),
+  connect: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).optional(),
+}).strict();
+
+export const PenagihUpdateOneRequiredWithoutKomisiNestedInputSchema: z.ZodType<Prisma.PenagihUpdateOneRequiredWithoutKomisiNestedInput> = z.object({
+  create: z.union([ z.lazy(() => PenagihCreateWithoutKomisiInputSchema), z.lazy(() => PenagihUncheckedCreateWithoutKomisiInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => PenagihCreateOrConnectWithoutKomisiInputSchema).optional(),
+  upsert: z.lazy(() => PenagihUpsertWithoutKomisiInputSchema).optional(),
+  connect: z.lazy(() => PenagihWhereUniqueInputSchema).optional(),
+  update: z.union([ z.lazy(() => PenagihUpdateToOneWithWhereWithoutKomisiInputSchema), z.lazy(() => PenagihUpdateWithoutKomisiInputSchema), z.lazy(() => PenagihUncheckedUpdateWithoutKomisiInputSchema) ]).optional(),
+}).strict();
+
+export const UserUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema: z.ZodType<Prisma.UserUpdateOneRequiredWithoutKomisiPetugasNestedInput> = z.object({
+  create: z.union([ z.lazy(() => UserCreateWithoutKomisiPetugasInputSchema), z.lazy(() => UserUncheckedCreateWithoutKomisiPetugasInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => UserCreateOrConnectWithoutKomisiPetugasInputSchema).optional(),
+  upsert: z.lazy(() => UserUpsertWithoutKomisiPetugasInputSchema).optional(),
+  connect: z.lazy(() => UserWhereUniqueInputSchema).optional(),
+  update: z.union([ z.lazy(() => UserUpdateToOneWithWhereWithoutKomisiPetugasInputSchema), z.lazy(() => UserUpdateWithoutKomisiPetugasInputSchema), z.lazy(() => UserUncheckedUpdateWithoutKomisiPetugasInputSchema) ]).optional(),
+}).strict();
+
+export const PelangganUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema: z.ZodType<Prisma.PelangganUpdateOneRequiredWithoutKomisiPetugasNestedInput> = z.object({
+  create: z.union([ z.lazy(() => PelangganCreateWithoutKomisiPetugasInputSchema), z.lazy(() => PelangganUncheckedCreateWithoutKomisiPetugasInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => PelangganCreateOrConnectWithoutKomisiPetugasInputSchema).optional(),
+  upsert: z.lazy(() => PelangganUpsertWithoutKomisiPetugasInputSchema).optional(),
+  connect: z.lazy(() => PelangganWhereUniqueInputSchema).optional(),
+  update: z.union([ z.lazy(() => PelangganUpdateToOneWithWhereWithoutKomisiPetugasInputSchema), z.lazy(() => PelangganUpdateWithoutKomisiPetugasInputSchema), z.lazy(() => PelangganUncheckedUpdateWithoutKomisiPetugasInputSchema) ]).optional(),
+}).strict();
+
+export const PembayaranUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema: z.ZodType<Prisma.PembayaranUpdateOneRequiredWithoutKomisiPetugasNestedInput> = z.object({
+  create: z.union([ z.lazy(() => PembayaranCreateWithoutKomisiPetugasInputSchema), z.lazy(() => PembayaranUncheckedCreateWithoutKomisiPetugasInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => PembayaranCreateOrConnectWithoutKomisiPetugasInputSchema).optional(),
+  upsert: z.lazy(() => PembayaranUpsertWithoutKomisiPetugasInputSchema).optional(),
+  connect: z.lazy(() => PembayaranWhereUniqueInputSchema).optional(),
+  update: z.union([ z.lazy(() => PembayaranUpdateToOneWithWhereWithoutKomisiPetugasInputSchema), z.lazy(() => PembayaranUpdateWithoutKomisiPetugasInputSchema), z.lazy(() => PembayaranUncheckedUpdateWithoutKomisiPetugasInputSchema) ]).optional(),
+}).strict();
+
+export const LogBayarUpdateOneWithoutKomisiPetugasNestedInputSchema: z.ZodType<Prisma.LogBayarUpdateOneWithoutKomisiPetugasNestedInput> = z.object({
+  create: z.union([ z.lazy(() => LogBayarCreateWithoutKomisiPetugasInputSchema), z.lazy(() => LogBayarUncheckedCreateWithoutKomisiPetugasInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => LogBayarCreateOrConnectWithoutKomisiPetugasInputSchema).optional(),
+  upsert: z.lazy(() => LogBayarUpsertWithoutKomisiPetugasInputSchema).optional(),
+  disconnect: z.union([ z.boolean(),z.lazy(() => LogBayarWhereInputSchema) ]).optional(),
+  delete: z.union([ z.boolean(),z.lazy(() => LogBayarWhereInputSchema) ]).optional(),
+  connect: z.lazy(() => LogBayarWhereUniqueInputSchema).optional(),
+  update: z.union([ z.lazy(() => LogBayarUpdateToOneWithWhereWithoutKomisiPetugasInputSchema), z.lazy(() => LogBayarUpdateWithoutKomisiPetugasInputSchema), z.lazy(() => LogBayarUncheckedUpdateWithoutKomisiPetugasInputSchema) ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpdateOneWithoutReversedByNestedInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateOneWithoutReversedByNestedInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutReversedByInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutReversedByInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutReversedByInputSchema).optional(),
+  upsert: z.lazy(() => KomisiPetugasEntriUpsertWithoutReversedByInputSchema).optional(),
+  disconnect: z.union([ z.boolean(),z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional(),
+  delete: z.union([ z.boolean(),z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional(),
+  connect: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).optional(),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateToOneWithWhereWithoutReversedByInputSchema), z.lazy(() => KomisiPetugasEntriUpdateWithoutReversedByInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutReversedByInputSchema) ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpdateOneWithoutReversesNestedInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateOneWithoutReversesNestedInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutReversesInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutReversesInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutReversesInputSchema).optional(),
+  upsert: z.lazy(() => KomisiPetugasEntriUpsertWithoutReversesInputSchema).optional(),
+  disconnect: z.union([ z.boolean(),z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional(),
+  delete: z.union([ z.boolean(),z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional(),
+  connect: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).optional(),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateToOneWithWhereWithoutReversesInputSchema), z.lazy(() => KomisiPetugasEntriUpdateWithoutReversesInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutReversesInputSchema) ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateOneWithoutReversesNestedInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateOneWithoutReversesNestedInput> = z.object({
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutReversesInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutReversesInputSchema) ]).optional(),
+  connectOrCreate: z.lazy(() => KomisiPetugasEntriCreateOrConnectWithoutReversesInputSchema).optional(),
+  upsert: z.lazy(() => KomisiPetugasEntriUpsertWithoutReversesInputSchema).optional(),
+  disconnect: z.union([ z.boolean(),z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional(),
+  delete: z.union([ z.boolean(),z.lazy(() => KomisiPetugasEntriWhereInputSchema) ]).optional(),
+  connect: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema).optional(),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateToOneWithWhereWithoutReversesInputSchema), z.lazy(() => KomisiPetugasEntriUpdateWithoutReversesInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutReversesInputSchema) ]).optional(),
+}).strict();
+
 export const NestedIntFilterSchema: z.ZodType<Prisma.NestedIntFilter> = z.object({
   equals: z.number().optional(),
   in: z.number().array().optional(),
@@ -18067,6 +18880,11 @@ export const NestedFloatNullableFilterSchema: z.ZodType<Prisma.NestedFloatNullab
   not: z.union([ z.number(),z.lazy(() => NestedFloatNullableFilterSchema) ]).optional().nullable(),
 }).strict();
 
+export const NestedBoolFilterSchema: z.ZodType<Prisma.NestedBoolFilter> = z.object({
+  equals: z.boolean().optional(),
+  not: z.union([ z.boolean(),z.lazy(() => NestedBoolFilterSchema) ]).optional(),
+}).strict();
+
 export const NestedEnumRoleNameFilterSchema: z.ZodType<Prisma.NestedEnumRoleNameFilter> = z.object({
   equals: z.lazy(() => RoleNameSchema).optional(),
   in: z.lazy(() => RoleNameSchema).array().optional(),
@@ -18077,11 +18895,6 @@ export const NestedEnumRoleNameFilterSchema: z.ZodType<Prisma.NestedEnumRoleName
 export const NestedBoolNullableFilterSchema: z.ZodType<Prisma.NestedBoolNullableFilter> = z.object({
   equals: z.boolean().optional().nullable(),
   not: z.union([ z.boolean(),z.lazy(() => NestedBoolNullableFilterSchema) ]).optional().nullable(),
-}).strict();
-
-export const NestedBoolFilterSchema: z.ZodType<Prisma.NestedBoolFilter> = z.object({
-  equals: z.boolean().optional(),
-  not: z.union([ z.boolean(),z.lazy(() => NestedBoolFilterSchema) ]).optional(),
 }).strict();
 
 export const NestedDateTimeFilterSchema: z.ZodType<Prisma.NestedDateTimeFilter> = z.object({
@@ -18223,6 +19036,14 @@ export const NestedFloatNullableWithAggregatesFilterSchema: z.ZodType<Prisma.Nes
   _max: z.lazy(() => NestedFloatNullableFilterSchema).optional(),
 }).strict();
 
+export const NestedBoolWithAggregatesFilterSchema: z.ZodType<Prisma.NestedBoolWithAggregatesFilter> = z.object({
+  equals: z.boolean().optional(),
+  not: z.union([ z.boolean(),z.lazy(() => NestedBoolWithAggregatesFilterSchema) ]).optional(),
+  _count: z.lazy(() => NestedIntFilterSchema).optional(),
+  _min: z.lazy(() => NestedBoolFilterSchema).optional(),
+  _max: z.lazy(() => NestedBoolFilterSchema).optional(),
+}).strict();
+
 export const NestedEnumRoleNameWithAggregatesFilterSchema: z.ZodType<Prisma.NestedEnumRoleNameWithAggregatesFilter> = z.object({
   equals: z.lazy(() => RoleNameSchema).optional(),
   in: z.lazy(() => RoleNameSchema).array().optional(),
@@ -18255,14 +19076,6 @@ export const NestedBoolNullableWithAggregatesFilterSchema: z.ZodType<Prisma.Nest
   _count: z.lazy(() => NestedIntNullableFilterSchema).optional(),
   _min: z.lazy(() => NestedBoolNullableFilterSchema).optional(),
   _max: z.lazy(() => NestedBoolNullableFilterSchema).optional(),
-}).strict();
-
-export const NestedBoolWithAggregatesFilterSchema: z.ZodType<Prisma.NestedBoolWithAggregatesFilter> = z.object({
-  equals: z.boolean().optional(),
-  not: z.union([ z.boolean(),z.lazy(() => NestedBoolWithAggregatesFilterSchema) ]).optional(),
-  _count: z.lazy(() => NestedIntFilterSchema).optional(),
-  _min: z.lazy(() => NestedBoolFilterSchema).optional(),
-  _max: z.lazy(() => NestedBoolFilterSchema).optional(),
 }).strict();
 
 export const NestedDateTimeWithAggregatesFilterSchema: z.ZodType<Prisma.NestedDateTimeWithAggregatesFilter> = z.object({
@@ -18588,6 +19401,7 @@ export const UserCreateWithoutChildsInputSchema: z.ZodType<Prisma.UserCreateWith
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -18635,6 +19449,7 @@ export const UserCreateWithoutChildsInputSchema: z.ZodType<Prisma.UserCreateWith
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutChildsInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutChildsInput> = z.object({
@@ -18649,6 +19464,7 @@ export const UserUncheckedCreateWithoutChildsInputSchema: z.ZodType<Prisma.UserU
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -18696,6 +19512,7 @@ export const UserUncheckedCreateWithoutChildsInputSchema: z.ZodType<Prisma.UserU
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutChildsInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutChildsInput> = z.object({
@@ -18714,6 +19531,7 @@ export const UserCreateWithoutParentInputSchema: z.ZodType<Prisma.UserCreateWith
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -18761,6 +19579,7 @@ export const UserCreateWithoutParentInputSchema: z.ZodType<Prisma.UserCreateWith
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutParentInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutParentInput> = z.object({
@@ -18775,6 +19594,7 @@ export const UserUncheckedCreateWithoutParentInputSchema: z.ZodType<Prisma.UserU
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -18822,6 +19642,7 @@ export const UserUncheckedCreateWithoutParentInputSchema: z.ZodType<Prisma.UserU
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutParentInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutParentInput> = z.object({
@@ -19035,6 +19856,7 @@ export const LogBayarCreateWithoutUserInputSchema: z.ZodType<Prisma.LogBayarCrea
   status: z.lazy(() => StatusBayarSchema),
   created: z.coerce.date().optional(),
   pembayaran: z.lazy(() => PembayaranCreateNestedOneWithoutLogInputSchema),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutLogBayarInputSchema).optional(),
 }).strict();
 
 export const LogBayarUncheckedCreateWithoutUserInputSchema: z.ZodType<Prisma.LogBayarUncheckedCreateWithoutUserInput> = z.object({
@@ -19044,6 +19866,7 @@ export const LogBayarUncheckedCreateWithoutUserInputSchema: z.ZodType<Prisma.Log
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   status: z.lazy(() => StatusBayarSchema),
   created: z.coerce.date().optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedOneWithoutLogBayarInputSchema).optional(),
 }).strict();
 
 export const LogBayarCreateOrConnectWithoutUserInputSchema: z.ZodType<Prisma.LogBayarCreateOrConnectWithoutUserInput> = z.object({
@@ -19502,12 +20325,14 @@ export const PenagihCreateWithoutOwnerInputSchema: z.ZodType<Prisma.PenagihCreat
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   akun: z.lazy(() => UserCreateNestedOneWithoutPenagihAkunInputSchema).optional(),
   penugasan: z.lazy(() => PenagihPenugasanCreateNestedManyWithoutPenagihInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutDariPenagihInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutKePenagihInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPenagihInputSchema).optional(),
 }).strict();
 
 export const PenagihUncheckedCreateWithoutOwnerInputSchema: z.ZodType<Prisma.PenagihUncheckedCreateWithoutOwnerInput> = z.object({
@@ -19516,11 +20341,13 @@ export const PenagihUncheckedCreateWithoutOwnerInputSchema: z.ZodType<Prisma.Pen
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   penugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedManyWithoutPenagihInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutDariPenagihInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutKePenagihInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPenagihInputSchema).optional(),
 }).strict();
 
 export const PenagihCreateOrConnectWithoutOwnerInputSchema: z.ZodType<Prisma.PenagihCreateOrConnectWithoutOwnerInput> = z.object({
@@ -19537,12 +20364,14 @@ export const PenagihCreateWithoutAkunInputSchema: z.ZodType<Prisma.PenagihCreate
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   owner: z.lazy(() => UserCreateNestedOneWithoutPenagihInputSchema),
   penugasan: z.lazy(() => PenagihPenugasanCreateNestedManyWithoutPenagihInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutDariPenagihInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutKePenagihInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPenagihInputSchema).optional(),
 }).strict();
 
 export const PenagihUncheckedCreateWithoutAkunInputSchema: z.ZodType<Prisma.PenagihUncheckedCreateWithoutAkunInput> = z.object({
@@ -19551,16 +20380,53 @@ export const PenagihUncheckedCreateWithoutAkunInputSchema: z.ZodType<Prisma.Pena
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   penugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedManyWithoutPenagihInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutDariPenagihInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutKePenagihInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPenagihInputSchema).optional(),
 }).strict();
 
 export const PenagihCreateOrConnectWithoutAkunInputSchema: z.ZodType<Prisma.PenagihCreateOrConnectWithoutAkunInput> = z.object({
   where: z.lazy(() => PenagihWhereUniqueInputSchema),
   create: z.union([ z.lazy(() => PenagihCreateWithoutAkunInputSchema), z.lazy(() => PenagihUncheckedCreateWithoutAkunInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriCreateWithoutActorInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateWithoutActorInput> = z.object({
+  ownerUserId: z.number().int(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  penagih: z.lazy(() => PenagihCreateNestedOneWithoutKomisiInputSchema),
+  pelanggan: z.lazy(() => PelangganCreateNestedOneWithoutKomisiPetugasInputSchema),
+  pembayaran: z.lazy(() => PembayaranCreateNestedOneWithoutKomisiPetugasInputSchema),
+  logBayar: z.lazy(() => LogBayarCreateNestedOneWithoutKomisiPetugasInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversedByInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedCreateWithoutActorInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateWithoutActorInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  penagihId: z.number().int(),
+  pelangganId: z.number().int(),
+  pembayaranId: z.number().int(),
+  logBayarId: z.number().int().optional().nullable(),
+  reversesId: z.number().int().optional().nullable(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriCreateOrConnectWithoutActorInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateOrConnectWithoutActorInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutActorInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriCreateManyActorInputEnvelopeSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateManyActorInputEnvelope> = z.object({
+  data: z.union([ z.lazy(() => KomisiPetugasEntriCreateManyActorInputSchema), z.lazy(() => KomisiPetugasEntriCreateManyActorInputSchema).array() ]),
+  skipDuplicates: z.boolean().optional(),
 }).strict();
 
 export const UserUpsertWithoutChildsInputSchema: z.ZodType<Prisma.UserUpsertWithoutChildsInput> = z.object({
@@ -19585,6 +20451,7 @@ export const UserUpdateWithoutChildsInputSchema: z.ZodType<Prisma.UserUpdateWith
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -19632,6 +20499,7 @@ export const UserUpdateWithoutChildsInputSchema: z.ZodType<Prisma.UserUpdateWith
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutChildsInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutChildsInput> = z.object({
@@ -19646,6 +20514,7 @@ export const UserUncheckedUpdateWithoutChildsInputSchema: z.ZodType<Prisma.UserU
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -19693,6 +20562,7 @@ export const UserUncheckedUpdateWithoutChildsInputSchema: z.ZodType<Prisma.UserU
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUpsertWithWhereUniqueWithoutParentInputSchema: z.ZodType<Prisma.UserUpsertWithWhereUniqueWithoutParentInput> = z.object({
@@ -19726,6 +20596,7 @@ export const UserScalarWhereInputSchema: z.ZodType<Prisma.UserScalarWhereInput> 
   npwp: z.union([ z.lazy(() => StringNullableFilterSchema), z.string() ]).optional().nullable(),
   omset: z.union([ z.lazy(() => IntNullableFilterSchema), z.number() ]).optional().nullable(),
   ppn: z.union([ z.lazy(() => FloatNullableFilterSchema), z.number() ]).optional().nullable(),
+  ppnEnabled: z.union([ z.lazy(() => BoolFilterSchema), z.boolean() ]).optional(),
   parentId: z.union([ z.lazy(() => IntNullableFilterSchema), z.number() ]).optional().nullable(),
   nomor: z.union([ z.lazy(() => StringNullableFilterSchema), z.string() ]).optional().nullable(),
   alamat: z.union([ z.lazy(() => StringNullableFilterSchema), z.string() ]).optional().nullable(),
@@ -20424,6 +21295,7 @@ export const PenagihScalarWhereInputSchema: z.ZodType<Prisma.PenagihScalarWhereI
   nama: z.union([ z.lazy(() => StringFilterSchema), z.string() ]).optional(),
   nomor: z.union([ z.lazy(() => StringNullableFilterSchema), z.string() ]).optional().nullable(),
   aktif: z.union([ z.lazy(() => BoolFilterSchema), z.boolean() ]).optional(),
+  komisiNominal: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
   created: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
   updated: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
 }).strict();
@@ -20443,12 +21315,14 @@ export const PenagihUpdateWithoutAkunInputSchema: z.ZodType<Prisma.PenagihUpdate
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   owner: z.lazy(() => UserUpdateOneRequiredWithoutPenagihNestedInputSchema).optional(),
   penugasan: z.lazy(() => PenagihPenugasanUpdateManyWithoutPenagihNestedInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutDariPenagihNestedInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutKePenagihNestedInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPenagihNestedInputSchema).optional(),
 }).strict();
 
 export const PenagihUncheckedUpdateWithoutAkunInputSchema: z.ZodType<Prisma.PenagihUncheckedUpdateWithoutAkunInput> = z.object({
@@ -20457,11 +21331,45 @@ export const PenagihUncheckedUpdateWithoutAkunInputSchema: z.ZodType<Prisma.Pena
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   penugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateManyWithoutPenagihNestedInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutDariPenagihNestedInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutKePenagihNestedInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPenagihNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpsertWithWhereUniqueWithoutActorInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpsertWithWhereUniqueWithoutActorInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutActorInputSchema) ]),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutActorInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriUpdateWithWhereUniqueWithoutActorInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateWithWhereUniqueWithoutActorInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  data: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutActorInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutActorInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriUpdateManyWithWhereWithoutActorInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateManyWithWhereWithoutActorInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema),
+  data: z.union([ z.lazy(() => KomisiPetugasEntriUpdateManyMutationInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriScalarWhereInputSchema: z.ZodType<Prisma.KomisiPetugasEntriScalarWhereInput> = z.object({
+  AND: z.union([ z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema), z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema).array() ]).optional(),
+  OR: z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema).array().optional(),
+  NOT: z.union([ z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema), z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema).array() ]).optional(),
+  id: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  ownerUserId: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  penagihId: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  actorUserId: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  pelangganId: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  pembayaranId: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  logBayarId: z.union([ z.lazy(() => IntNullableFilterSchema), z.number() ]).optional().nullable(),
+  reversesId: z.union([ z.lazy(() => IntNullableFilterSchema), z.number() ]).optional().nullable(),
+  nominal: z.union([ z.lazy(() => IntFilterSchema), z.number() ]).optional(),
+  created: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
 }).strict();
 
 export const PortalBersamaMitraCreateWithoutPortalInputSchema: z.ZodType<Prisma.PortalBersamaMitraCreateWithoutPortalInput> = z.object({
@@ -20537,6 +21445,7 @@ export const UserCreateWithoutPortalBersamaAnggotaInputSchema: z.ZodType<Prisma.
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -20584,6 +21493,7 @@ export const UserCreateWithoutPortalBersamaAnggotaInputSchema: z.ZodType<Prisma.
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutPortalBersamaAnggotaInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutPortalBersamaAnggotaInput> = z.object({
@@ -20598,6 +21508,7 @@ export const UserUncheckedCreateWithoutPortalBersamaAnggotaInputSchema: z.ZodTyp
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -20645,6 +21556,7 @@ export const UserUncheckedCreateWithoutPortalBersamaAnggotaInputSchema: z.ZodTyp
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutPortalBersamaAnggotaInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutPortalBersamaAnggotaInput> = z.object({
@@ -20708,6 +21620,7 @@ export const UserUpdateWithoutPortalBersamaAnggotaInputSchema: z.ZodType<Prisma.
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -20755,6 +21668,7 @@ export const UserUpdateWithoutPortalBersamaAnggotaInputSchema: z.ZodType<Prisma.
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutPortalBersamaAnggotaInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutPortalBersamaAnggotaInput> = z.object({
@@ -20769,6 +21683,7 @@ export const UserUncheckedUpdateWithoutPortalBersamaAnggotaInputSchema: z.ZodTyp
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -20816,6 +21731,7 @@ export const UserUncheckedUpdateWithoutPortalBersamaAnggotaInputSchema: z.ZodTyp
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserCreateWithoutTripayGatewayInputSchema: z.ZodType<Prisma.UserCreateWithoutTripayGatewayInput> = z.object({
@@ -20829,6 +21745,7 @@ export const UserCreateWithoutTripayGatewayInputSchema: z.ZodType<Prisma.UserCre
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -20876,6 +21793,7 @@ export const UserCreateWithoutTripayGatewayInputSchema: z.ZodType<Prisma.UserCre
   portalBersamaAnggota: z.lazy(() => PortalBersamaMitraCreateNestedManyWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutTripayGatewayInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutTripayGatewayInput> = z.object({
@@ -20890,6 +21808,7 @@ export const UserUncheckedCreateWithoutTripayGatewayInputSchema: z.ZodType<Prism
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -20937,6 +21856,7 @@ export const UserUncheckedCreateWithoutTripayGatewayInputSchema: z.ZodType<Prism
   portalBersamaAnggota: z.lazy(() => PortalBersamaMitraUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutTripayGatewayInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutTripayGatewayInput> = z.object({
@@ -20966,6 +21886,7 @@ export const UserUpdateWithoutTripayGatewayInputSchema: z.ZodType<Prisma.UserUpd
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -21013,6 +21934,7 @@ export const UserUpdateWithoutTripayGatewayInputSchema: z.ZodType<Prisma.UserUpd
   portalBersamaAnggota: z.lazy(() => PortalBersamaMitraUpdateManyWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutTripayGatewayInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutTripayGatewayInput> = z.object({
@@ -21027,6 +21949,7 @@ export const UserUncheckedUpdateWithoutTripayGatewayInputSchema: z.ZodType<Prism
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -21074,6 +21997,7 @@ export const UserUncheckedUpdateWithoutTripayGatewayInputSchema: z.ZodType<Prism
   portalBersamaAnggota: z.lazy(() => PortalBersamaMitraUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const PembayaranCreateWithoutTripayTransaksiInputSchema: z.ZodType<Prisma.PembayaranCreateWithoutTripayTransaksiInput> = z.object({
@@ -21083,6 +22007,7 @@ export const PembayaranCreateWithoutTripayTransaksiInputSchema: z.ZodType<Prisma
   total: z.number(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
@@ -21090,6 +22015,7 @@ export const PembayaranCreateWithoutTripayTransaksiInputSchema: z.ZodType<Prisma
   paket: z.lazy(() => PaketCreateNestedOneWithoutPembayaranInputSchema),
   bank: z.lazy(() => BankCreateNestedOneWithoutPembayaranInputSchema).optional(),
   log: z.lazy(() => LogBayarCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPembayaranInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
 
@@ -21104,10 +22030,12 @@ export const PembayaranUncheckedCreateWithoutTripayTransaksiInputSchema: z.ZodTy
   bankId: z.number().int().optional().nullable(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   log: z.lazy(() => LogBayarUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
 
@@ -21134,6 +22062,7 @@ export const PembayaranUpdateWithoutTripayTransaksiInputSchema: z.ZodType<Prisma
   total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
@@ -21141,6 +22070,7 @@ export const PembayaranUpdateWithoutTripayTransaksiInputSchema: z.ZodType<Prisma
   paket: z.lazy(() => PaketUpdateOneRequiredWithoutPembayaranNestedInputSchema).optional(),
   bank: z.lazy(() => BankUpdateOneWithoutPembayaranNestedInputSchema).optional(),
   log: z.lazy(() => LogBayarUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
 
@@ -21155,10 +22085,12 @@ export const PembayaranUncheckedUpdateWithoutTripayTransaksiInputSchema: z.ZodTy
   bankId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   log: z.lazy(() => LogBayarUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
 
@@ -21173,6 +22105,7 @@ export const UserCreateWithoutClientInputSchema: z.ZodType<Prisma.UserCreateWith
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -21220,6 +22153,7 @@ export const UserCreateWithoutClientInputSchema: z.ZodType<Prisma.UserCreateWith
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutClientInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutClientInput> = z.object({
@@ -21234,6 +22168,7 @@ export const UserUncheckedCreateWithoutClientInputSchema: z.ZodType<Prisma.UserU
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -21281,6 +22216,7 @@ export const UserUncheckedCreateWithoutClientInputSchema: z.ZodType<Prisma.UserU
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutClientInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutClientInput> = z.object({
@@ -21388,6 +22324,7 @@ export const UserUpdateWithoutClientInputSchema: z.ZodType<Prisma.UserUpdateWith
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -21435,6 +22372,7 @@ export const UserUpdateWithoutClientInputSchema: z.ZodType<Prisma.UserUpdateWith
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutClientInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutClientInput> = z.object({
@@ -21449,6 +22387,7 @@ export const UserUncheckedUpdateWithoutClientInputSchema: z.ZodType<Prisma.UserU
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -21496,6 +22435,7 @@ export const UserUncheckedUpdateWithoutClientInputSchema: z.ZodType<Prisma.UserU
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const ClientPeroranganUpsertWithWhereUniqueWithoutClientInputSchema: z.ZodType<Prisma.ClientPeroranganUpsertWithWhereUniqueWithoutClientInput> = z.object({
@@ -21767,6 +22707,7 @@ export const UserCreateWithoutSessionInputSchema: z.ZodType<Prisma.UserCreateWit
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -21814,6 +22755,7 @@ export const UserCreateWithoutSessionInputSchema: z.ZodType<Prisma.UserCreateWit
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutSessionInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutSessionInput> = z.object({
@@ -21828,6 +22770,7 @@ export const UserUncheckedCreateWithoutSessionInputSchema: z.ZodType<Prisma.User
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -21875,6 +22818,7 @@ export const UserUncheckedCreateWithoutSessionInputSchema: z.ZodType<Prisma.User
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutSessionInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutSessionInput> = z.object({
@@ -21904,6 +22848,7 @@ export const UserUpdateWithoutSessionInputSchema: z.ZodType<Prisma.UserUpdateWit
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -21951,6 +22896,7 @@ export const UserUpdateWithoutSessionInputSchema: z.ZodType<Prisma.UserUpdateWit
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutSessionInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutSessionInput> = z.object({
@@ -21965,6 +22911,7 @@ export const UserUncheckedUpdateWithoutSessionInputSchema: z.ZodType<Prisma.User
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -22012,6 +22959,7 @@ export const UserUncheckedUpdateWithoutSessionInputSchema: z.ZodType<Prisma.User
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserCreateWithoutRoutersInputSchema: z.ZodType<Prisma.UserCreateWithoutRoutersInput> = z.object({
@@ -22025,6 +22973,7 @@ export const UserCreateWithoutRoutersInputSchema: z.ZodType<Prisma.UserCreateWit
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -22072,6 +23021,7 @@ export const UserCreateWithoutRoutersInputSchema: z.ZodType<Prisma.UserCreateWit
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutRoutersInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutRoutersInput> = z.object({
@@ -22086,6 +23036,7 @@ export const UserUncheckedCreateWithoutRoutersInputSchema: z.ZodType<Prisma.User
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -22133,6 +23084,7 @@ export const UserUncheckedCreateWithoutRoutersInputSchema: z.ZodType<Prisma.User
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutRoutersInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutRoutersInput> = z.object({
@@ -22169,6 +23121,7 @@ export const PelangganCreateWithoutRouterInputSchema: z.ZodType<Prisma.Pelanggan
   tagihanDihapus: z.lazy(() => TagihanDihapusCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedCreateWithoutRouterInputSchema: z.ZodType<Prisma.PelangganUncheckedCreateWithoutRouterInput> = z.object({
@@ -22201,6 +23154,7 @@ export const PelangganUncheckedCreateWithoutRouterInputSchema: z.ZodType<Prisma.
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateOrConnectWithoutRouterInputSchema: z.ZodType<Prisma.PelangganCreateOrConnectWithoutRouterInput> = z.object({
@@ -22408,6 +23362,7 @@ export const UserUpdateWithoutRoutersInputSchema: z.ZodType<Prisma.UserUpdateWit
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -22455,6 +23410,7 @@ export const UserUpdateWithoutRoutersInputSchema: z.ZodType<Prisma.UserUpdateWit
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutRoutersInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutRoutersInput> = z.object({
@@ -22469,6 +23425,7 @@ export const UserUncheckedUpdateWithoutRoutersInputSchema: z.ZodType<Prisma.User
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -22516,6 +23473,7 @@ export const UserUncheckedUpdateWithoutRoutersInputSchema: z.ZodType<Prisma.User
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUpsertWithWhereUniqueWithoutRouterInputSchema: z.ZodType<Prisma.PelangganUpsertWithWhereUniqueWithoutRouterInput> = z.object({
@@ -22837,12 +23795,14 @@ export const PembayaranCreateWithoutPelangganInputSchema: z.ZodType<Prisma.Pemba
   total: z.number(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   paket: z.lazy(() => PaketCreateNestedOneWithoutPembayaranInputSchema),
   bank: z.lazy(() => BankCreateNestedOneWithoutPembayaranInputSchema).optional(),
   log: z.lazy(() => LogBayarCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPembayaranInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiCreateNestedManyWithoutPembayaranInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
@@ -22857,10 +23817,12 @@ export const PembayaranUncheckedCreateWithoutPelangganInputSchema: z.ZodType<Pri
   bankId: z.number().int().optional().nullable(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   log: z.lazy(() => LogBayarUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
@@ -23073,6 +24035,41 @@ export const PenagihPenugasanLogCreateManyPelangganInputEnvelopeSchema: z.ZodTyp
   skipDuplicates: z.boolean().optional(),
 }).strict();
 
+export const KomisiPetugasEntriCreateWithoutPelangganInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateWithoutPelangganInput> = z.object({
+  ownerUserId: z.number().int(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  penagih: z.lazy(() => PenagihCreateNestedOneWithoutKomisiInputSchema),
+  actor: z.lazy(() => UserCreateNestedOneWithoutKomisiPetugasInputSchema),
+  pembayaran: z.lazy(() => PembayaranCreateNestedOneWithoutKomisiPetugasInputSchema),
+  logBayar: z.lazy(() => LogBayarCreateNestedOneWithoutKomisiPetugasInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversedByInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedCreateWithoutPelangganInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateWithoutPelangganInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  penagihId: z.number().int(),
+  actorUserId: z.number().int(),
+  pembayaranId: z.number().int(),
+  logBayarId: z.number().int().optional().nullable(),
+  reversesId: z.number().int().optional().nullable(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriCreateOrConnectWithoutPelangganInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateOrConnectWithoutPelangganInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPelangganInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriCreateManyPelangganInputEnvelopeSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateManyPelangganInputEnvelope> = z.object({
+  data: z.union([ z.lazy(() => KomisiPetugasEntriCreateManyPelangganInputSchema), z.lazy(() => KomisiPetugasEntriCreateManyPelangganInputSchema).array() ]),
+  skipDuplicates: z.boolean().optional(),
+}).strict();
+
 export const PppSecretUpsertWithoutPelangganInputSchema: z.ZodType<Prisma.PppSecretUpsertWithoutPelangganInput> = z.object({
   update: z.union([ z.lazy(() => PppSecretUpdateWithoutPelangganInputSchema), z.lazy(() => PppSecretUncheckedUpdateWithoutPelangganInputSchema) ]),
   create: z.union([ z.lazy(() => PppSecretCreateWithoutPelangganInputSchema), z.lazy(() => PppSecretUncheckedCreateWithoutPelangganInputSchema) ]),
@@ -23267,6 +24264,7 @@ export const PembayaranScalarWhereInputSchema: z.ZodType<Prisma.PembayaranScalar
   bankId: z.union([ z.lazy(() => IntNullableFilterSchema), z.number() ]).optional().nullable(),
   metode: z.union([ z.lazy(() => EnumMetodeBayarNullableFilterSchema), z.lazy(() => MetodeBayarSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.lazy(() => BoolFilterSchema), z.boolean() ]).optional(),
+  bayarSekaligus: z.union([ z.lazy(() => IntNullableFilterSchema), z.number() ]).optional().nullable(),
   status: z.union([ z.lazy(() => EnumStatusBayarFilterSchema), z.lazy(() => StatusBayarSchema) ]).optional(),
   created: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
   updated: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
@@ -23427,6 +24425,22 @@ export const PenagihPenugasanLogScalarWhereInputSchema: z.ZodType<Prisma.Penagih
   created: z.union([ z.lazy(() => DateTimeFilterSchema), z.coerce.date() ]).optional(),
 }).strict();
 
+export const KomisiPetugasEntriUpsertWithWhereUniqueWithoutPelangganInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpsertWithWhereUniqueWithoutPelangganInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutPelangganInputSchema) ]),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPelangganInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriUpdateWithWhereUniqueWithoutPelangganInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateWithWhereUniqueWithoutPelangganInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  data: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutPelangganInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutPelangganInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriUpdateManyWithWhereWithoutPelangganInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateManyWithWhereWithoutPelangganInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema),
+  data: z.union([ z.lazy(() => KomisiPetugasEntriUpdateManyMutationInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganInputSchema) ]),
+}).strict();
+
 export const UserCreateWithoutStaffPelangganScopesInputSchema: z.ZodType<Prisma.UserCreateWithoutStaffPelangganScopesInput> = z.object({
   nama: z.string().min(1, { message: "Required" }),
   user: z.string().min(1, { message: "Required" }),
@@ -23438,6 +24452,7 @@ export const UserCreateWithoutStaffPelangganScopesInputSchema: z.ZodType<Prisma.
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -23485,6 +24500,7 @@ export const UserCreateWithoutStaffPelangganScopesInputSchema: z.ZodType<Prisma.
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutStaffPelangganScopesInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutStaffPelangganScopesInput> = z.object({
@@ -23499,6 +24515,7 @@ export const UserUncheckedCreateWithoutStaffPelangganScopesInputSchema: z.ZodTyp
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -23546,6 +24563,7 @@ export const UserUncheckedCreateWithoutStaffPelangganScopesInputSchema: z.ZodTyp
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutStaffPelangganScopesInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutStaffPelangganScopesInput> = z.object({
@@ -23582,6 +24600,7 @@ export const PelangganCreateWithoutStaffPelangganScopesInputSchema: z.ZodType<Pr
   tagihanDihapus: z.lazy(() => TagihanDihapusCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedCreateWithoutStaffPelangganScopesInputSchema: z.ZodType<Prisma.PelangganUncheckedCreateWithoutStaffPelangganScopesInput> = z.object({
@@ -23614,6 +24633,7 @@ export const PelangganUncheckedCreateWithoutStaffPelangganScopesInputSchema: z.Z
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateOrConnectWithoutStaffPelangganScopesInputSchema: z.ZodType<Prisma.PelangganCreateOrConnectWithoutStaffPelangganScopesInput> = z.object({
@@ -23643,6 +24663,7 @@ export const UserUpdateWithoutStaffPelangganScopesInputSchema: z.ZodType<Prisma.
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -23690,6 +24711,7 @@ export const UserUpdateWithoutStaffPelangganScopesInputSchema: z.ZodType<Prisma.
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutStaffPelangganScopesInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutStaffPelangganScopesInput> = z.object({
@@ -23704,6 +24726,7 @@ export const UserUncheckedUpdateWithoutStaffPelangganScopesInputSchema: z.ZodTyp
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -23751,6 +24774,7 @@ export const UserUncheckedUpdateWithoutStaffPelangganScopesInputSchema: z.ZodTyp
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUpsertWithoutStaffPelangganScopesInputSchema: z.ZodType<Prisma.PelangganUpsertWithoutStaffPelangganScopesInput> = z.object({
@@ -23793,6 +24817,7 @@ export const PelangganUpdateWithoutStaffPelangganScopesInputSchema: z.ZodType<Pr
   tagihanDihapus: z.lazy(() => TagihanDihapusUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateWithoutStaffPelangganScopesInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateWithoutStaffPelangganScopesInput> = z.object({
@@ -23825,6 +24850,7 @@ export const PelangganUncheckedUpdateWithoutStaffPelangganScopesInputSchema: z.Z
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const RouterCreateWithoutPpp_secretInputSchema: z.ZodType<Prisma.RouterCreateWithoutPpp_secretInput> = z.object({
@@ -24013,6 +25039,7 @@ export const PelangganCreateWithoutPpp_secretInputSchema: z.ZodType<Prisma.Pelan
   tagihanDihapus: z.lazy(() => TagihanDihapusCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedCreateWithoutPpp_secretInputSchema: z.ZodType<Prisma.PelangganUncheckedCreateWithoutPpp_secretInput> = z.object({
@@ -24045,6 +25072,7 @@ export const PelangganUncheckedCreateWithoutPpp_secretInputSchema: z.ZodType<Pri
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateOrConnectWithoutPpp_secretInputSchema: z.ZodType<Prisma.PelangganCreateOrConnectWithoutPpp_secretInput> = z.object({
@@ -24260,6 +25288,7 @@ export const PelangganUpdateWithoutPpp_secretInputSchema: z.ZodType<Prisma.Pelan
   tagihanDihapus: z.lazy(() => TagihanDihapusUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateWithoutPpp_secretInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateWithoutPpp_secretInput> = z.object({
@@ -24292,6 +25321,7 @@ export const PelangganUncheckedUpdateWithoutPpp_secretInputSchema: z.ZodType<Pri
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PppSecretCreateWithoutPackageChangesInputSchema: z.ZodType<Prisma.PppSecretCreateWithoutPackageChangesInput> = z.object({
@@ -24815,6 +25845,7 @@ export const PelangganCreateWithoutPaketInputSchema: z.ZodType<Prisma.PelangganC
   tagihanDihapus: z.lazy(() => TagihanDihapusCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedCreateWithoutPaketInputSchema: z.ZodType<Prisma.PelangganUncheckedCreateWithoutPaketInput> = z.object({
@@ -24847,6 +25878,7 @@ export const PelangganUncheckedCreateWithoutPaketInputSchema: z.ZodType<Prisma.P
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateOrConnectWithoutPaketInputSchema: z.ZodType<Prisma.PelangganCreateOrConnectWithoutPaketInput> = z.object({
@@ -24870,6 +25902,7 @@ export const UserCreateWithoutPaketInputSchema: z.ZodType<Prisma.UserCreateWitho
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -24917,6 +25950,7 @@ export const UserCreateWithoutPaketInputSchema: z.ZodType<Prisma.UserCreateWitho
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutPaketInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutPaketInput> = z.object({
@@ -24931,6 +25965,7 @@ export const UserUncheckedCreateWithoutPaketInputSchema: z.ZodType<Prisma.UserUn
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -24978,6 +26013,7 @@ export const UserUncheckedCreateWithoutPaketInputSchema: z.ZodType<Prisma.UserUn
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutPaketInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutPaketInput> = z.object({
@@ -24992,12 +26028,14 @@ export const PembayaranCreateWithoutPaketInputSchema: z.ZodType<Prisma.Pembayara
   total: z.number(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   pelanggan: z.lazy(() => PelangganCreateNestedOneWithoutPembayaranInputSchema),
   bank: z.lazy(() => BankCreateNestedOneWithoutPembayaranInputSchema).optional(),
   log: z.lazy(() => LogBayarCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPembayaranInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiCreateNestedManyWithoutPembayaranInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
@@ -25012,10 +26050,12 @@ export const PembayaranUncheckedCreateWithoutPaketInputSchema: z.ZodType<Prisma.
   bankId: z.number().int().optional().nullable(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   log: z.lazy(() => LogBayarUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
@@ -25086,6 +26126,7 @@ export const UserUpdateWithoutPaketInputSchema: z.ZodType<Prisma.UserUpdateWitho
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -25133,6 +26174,7 @@ export const UserUpdateWithoutPaketInputSchema: z.ZodType<Prisma.UserUpdateWitho
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutPaketInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutPaketInput> = z.object({
@@ -25147,6 +26189,7 @@ export const UserUncheckedUpdateWithoutPaketInputSchema: z.ZodType<Prisma.UserUn
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -25194,6 +26237,7 @@ export const UserUncheckedUpdateWithoutPaketInputSchema: z.ZodType<Prisma.UserUn
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const PembayaranUpsertWithWhereUniqueWithoutPaketInputSchema: z.ZodType<Prisma.PembayaranUpsertWithWhereUniqueWithoutPaketInput> = z.object({
@@ -25423,6 +26467,7 @@ export const UserCreateWithoutBankInputSchema: z.ZodType<Prisma.UserCreateWithou
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -25470,6 +26515,7 @@ export const UserCreateWithoutBankInputSchema: z.ZodType<Prisma.UserCreateWithou
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutBankInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutBankInput> = z.object({
@@ -25484,6 +26530,7 @@ export const UserUncheckedCreateWithoutBankInputSchema: z.ZodType<Prisma.UserUnc
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -25531,6 +26578,7 @@ export const UserUncheckedCreateWithoutBankInputSchema: z.ZodType<Prisma.UserUnc
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutBankInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutBankInput> = z.object({
@@ -25545,12 +26593,14 @@ export const PembayaranCreateWithoutBankInputSchema: z.ZodType<Prisma.Pembayaran
   total: z.number(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   pelanggan: z.lazy(() => PelangganCreateNestedOneWithoutPembayaranInputSchema),
   paket: z.lazy(() => PaketCreateNestedOneWithoutPembayaranInputSchema),
   log: z.lazy(() => LogBayarCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPembayaranInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiCreateNestedManyWithoutPembayaranInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
@@ -25565,10 +26615,12 @@ export const PembayaranUncheckedCreateWithoutBankInputSchema: z.ZodType<Prisma.P
   total: z.number(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   log: z.lazy(() => LogBayarUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
@@ -25640,6 +26692,7 @@ export const UserUpdateWithoutBankInputSchema: z.ZodType<Prisma.UserUpdateWithou
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -25687,6 +26740,7 @@ export const UserUpdateWithoutBankInputSchema: z.ZodType<Prisma.UserUpdateWithou
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutBankInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutBankInput> = z.object({
@@ -25701,6 +26755,7 @@ export const UserUncheckedUpdateWithoutBankInputSchema: z.ZodType<Prisma.UserUnc
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -25748,6 +26803,7 @@ export const UserUncheckedUpdateWithoutBankInputSchema: z.ZodType<Prisma.UserUnc
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const PembayaranUpsertWithWhereUniqueWithoutBankInputSchema: z.ZodType<Prisma.PembayaranUpsertWithWhereUniqueWithoutBankInput> = z.object({
@@ -25811,6 +26867,7 @@ export const PelangganCreateWithoutTagihanDihapusInputSchema: z.ZodType<Prisma.P
   portalTiket: z.lazy(() => PortalTiketCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedCreateWithoutTagihanDihapusInputSchema: z.ZodType<Prisma.PelangganUncheckedCreateWithoutTagihanDihapusInput> = z.object({
@@ -25843,6 +26900,7 @@ export const PelangganUncheckedCreateWithoutTagihanDihapusInputSchema: z.ZodType
   portalTiket: z.lazy(() => PortalTiketUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateOrConnectWithoutTagihanDihapusInputSchema: z.ZodType<Prisma.PelangganCreateOrConnectWithoutTagihanDihapusInput> = z.object({
@@ -25890,6 +26948,7 @@ export const PelangganUpdateWithoutTagihanDihapusInputSchema: z.ZodType<Prisma.P
   portalTiket: z.lazy(() => PortalTiketUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateWithoutTagihanDihapusInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateWithoutTagihanDihapusInput> = z.object({
@@ -25922,6 +26981,7 @@ export const PelangganUncheckedUpdateWithoutTagihanDihapusInputSchema: z.ZodType
   portalTiket: z.lazy(() => PortalTiketUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateWithoutPembayaranInputSchema: z.ZodType<Prisma.PelangganCreateWithoutPembayaranInput> = z.object({
@@ -25953,6 +27013,7 @@ export const PelangganCreateWithoutPembayaranInputSchema: z.ZodType<Prisma.Pelan
   tagihanDihapus: z.lazy(() => TagihanDihapusCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedCreateWithoutPembayaranInputSchema: z.ZodType<Prisma.PelangganUncheckedCreateWithoutPembayaranInput> = z.object({
@@ -25985,6 +27046,7 @@ export const PelangganUncheckedCreateWithoutPembayaranInputSchema: z.ZodType<Pri
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateOrConnectWithoutPembayaranInputSchema: z.ZodType<Prisma.PelangganCreateOrConnectWithoutPembayaranInput> = z.object({
@@ -26060,6 +27122,7 @@ export const LogBayarCreateWithoutPembayaranInputSchema: z.ZodType<Prisma.LogBay
   status: z.lazy(() => StatusBayarSchema),
   created: z.coerce.date().optional(),
   user: z.lazy(() => UserCreateNestedOneWithoutLog_bayarInputSchema),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutLogBayarInputSchema).optional(),
 }).strict();
 
 export const LogBayarUncheckedCreateWithoutPembayaranInputSchema: z.ZodType<Prisma.LogBayarUncheckedCreateWithoutPembayaranInput> = z.object({
@@ -26069,6 +27132,7 @@ export const LogBayarUncheckedCreateWithoutPembayaranInputSchema: z.ZodType<Pris
   status: z.lazy(() => StatusBayarSchema),
   inputterId: z.number().int(),
   created: z.coerce.date().optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedOneWithoutLogBayarInputSchema).optional(),
 }).strict();
 
 export const LogBayarCreateOrConnectWithoutPembayaranInputSchema: z.ZodType<Prisma.LogBayarCreateOrConnectWithoutPembayaranInput> = z.object({
@@ -26078,6 +27142,41 @@ export const LogBayarCreateOrConnectWithoutPembayaranInputSchema: z.ZodType<Pris
 
 export const LogBayarCreateManyPembayaranInputEnvelopeSchema: z.ZodType<Prisma.LogBayarCreateManyPembayaranInputEnvelope> = z.object({
   data: z.union([ z.lazy(() => LogBayarCreateManyPembayaranInputSchema), z.lazy(() => LogBayarCreateManyPembayaranInputSchema).array() ]),
+  skipDuplicates: z.boolean().optional(),
+}).strict();
+
+export const KomisiPetugasEntriCreateWithoutPembayaranInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateWithoutPembayaranInput> = z.object({
+  ownerUserId: z.number().int(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  penagih: z.lazy(() => PenagihCreateNestedOneWithoutKomisiInputSchema),
+  actor: z.lazy(() => UserCreateNestedOneWithoutKomisiPetugasInputSchema),
+  pelanggan: z.lazy(() => PelangganCreateNestedOneWithoutKomisiPetugasInputSchema),
+  logBayar: z.lazy(() => LogBayarCreateNestedOneWithoutKomisiPetugasInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversedByInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedCreateWithoutPembayaranInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateWithoutPembayaranInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  penagihId: z.number().int(),
+  actorUserId: z.number().int(),
+  pelangganId: z.number().int(),
+  logBayarId: z.number().int().optional().nullable(),
+  reversesId: z.number().int().optional().nullable(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriCreateOrConnectWithoutPembayaranInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateOrConnectWithoutPembayaranInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPembayaranInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriCreateManyPembayaranInputEnvelopeSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateManyPembayaranInputEnvelope> = z.object({
+  data: z.union([ z.lazy(() => KomisiPetugasEntriCreateManyPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriCreateManyPembayaranInputSchema).array() ]),
   skipDuplicates: z.boolean().optional(),
 }).strict();
 
@@ -26197,6 +27296,7 @@ export const PelangganUpdateWithoutPembayaranInputSchema: z.ZodType<Prisma.Pelan
   tagihanDihapus: z.lazy(() => TagihanDihapusUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateWithoutPembayaranInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateWithoutPembayaranInput> = z.object({
@@ -26229,6 +27329,7 @@ export const PelangganUncheckedUpdateWithoutPembayaranInputSchema: z.ZodType<Pri
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PaketUpsertWithoutPembayaranInputSchema: z.ZodType<Prisma.PaketUpsertWithoutPembayaranInput> = z.object({
@@ -26321,6 +27422,22 @@ export const LogBayarUpdateManyWithWhereWithoutPembayaranInputSchema: z.ZodType<
   data: z.union([ z.lazy(() => LogBayarUpdateManyMutationInputSchema), z.lazy(() => LogBayarUncheckedUpdateManyWithoutPembayaranInputSchema) ]),
 }).strict();
 
+export const KomisiPetugasEntriUpsertWithWhereUniqueWithoutPembayaranInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpsertWithWhereUniqueWithoutPembayaranInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutPembayaranInputSchema) ]),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPembayaranInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriUpdateWithWhereUniqueWithoutPembayaranInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateWithWhereUniqueWithoutPembayaranInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  data: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutPembayaranInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutPembayaranInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriUpdateManyWithWhereWithoutPembayaranInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateManyWithWhereWithoutPembayaranInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema),
+  data: z.union([ z.lazy(() => KomisiPetugasEntriUpdateManyMutationInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPembayaranInputSchema) ]),
+}).strict();
+
 export const TripayTransaksiUpsertWithWhereUniqueWithoutPembayaranInputSchema: z.ZodType<Prisma.TripayTransaksiUpsertWithWhereUniqueWithoutPembayaranInput> = z.object({
   where: z.lazy(() => TripayTransaksiWhereUniqueInputSchema),
   update: z.union([ z.lazy(() => TripayTransaksiUpdateWithoutPembayaranInputSchema), z.lazy(() => TripayTransaksiUncheckedUpdateWithoutPembayaranInputSchema) ]),
@@ -26375,12 +27492,14 @@ export const PembayaranCreateWithoutLogInputSchema: z.ZodType<Prisma.PembayaranC
   total: z.number(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   pelanggan: z.lazy(() => PelangganCreateNestedOneWithoutPembayaranInputSchema),
   paket: z.lazy(() => PaketCreateNestedOneWithoutPembayaranInputSchema),
   bank: z.lazy(() => BankCreateNestedOneWithoutPembayaranInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPembayaranInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiCreateNestedManyWithoutPembayaranInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
@@ -26396,9 +27515,11 @@ export const PembayaranUncheckedCreateWithoutLogInputSchema: z.ZodType<Prisma.Pe
   bankId: z.number().int().optional().nullable(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
@@ -26419,6 +27540,7 @@ export const UserCreateWithoutLog_bayarInputSchema: z.ZodType<Prisma.UserCreateW
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -26466,6 +27588,7 @@ export const UserCreateWithoutLog_bayarInputSchema: z.ZodType<Prisma.UserCreateW
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutLog_bayarInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutLog_bayarInput> = z.object({
@@ -26480,6 +27603,7 @@ export const UserUncheckedCreateWithoutLog_bayarInputSchema: z.ZodType<Prisma.Us
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -26527,11 +27651,42 @@ export const UserUncheckedCreateWithoutLog_bayarInputSchema: z.ZodType<Prisma.Us
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutLog_bayarInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutLog_bayarInput> = z.object({
   where: z.lazy(() => UserWhereUniqueInputSchema),
   create: z.union([ z.lazy(() => UserCreateWithoutLog_bayarInputSchema), z.lazy(() => UserUncheckedCreateWithoutLog_bayarInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriCreateWithoutLogBayarInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateWithoutLogBayarInput> = z.object({
+  ownerUserId: z.number().int(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  penagih: z.lazy(() => PenagihCreateNestedOneWithoutKomisiInputSchema),
+  actor: z.lazy(() => UserCreateNestedOneWithoutKomisiPetugasInputSchema),
+  pelanggan: z.lazy(() => PelangganCreateNestedOneWithoutKomisiPetugasInputSchema),
+  pembayaran: z.lazy(() => PembayaranCreateNestedOneWithoutKomisiPetugasInputSchema),
+  reverses: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversedByInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedCreateWithoutLogBayarInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateWithoutLogBayarInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  penagihId: z.number().int(),
+  actorUserId: z.number().int(),
+  pelangganId: z.number().int(),
+  pembayaranId: z.number().int(),
+  reversesId: z.number().int().optional().nullable(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriCreateOrConnectWithoutLogBayarInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateOrConnectWithoutLogBayarInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutLogBayarInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutLogBayarInputSchema) ]),
 }).strict();
 
 export const PembayaranUpsertWithoutLogInputSchema: z.ZodType<Prisma.PembayaranUpsertWithoutLogInput> = z.object({
@@ -26552,12 +27707,14 @@ export const PembayaranUpdateWithoutLogInputSchema: z.ZodType<Prisma.PembayaranU
   total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   pelanggan: z.lazy(() => PelangganUpdateOneRequiredWithoutPembayaranNestedInputSchema).optional(),
   paket: z.lazy(() => PaketUpdateOneRequiredWithoutPembayaranNestedInputSchema).optional(),
   bank: z.lazy(() => BankUpdateOneWithoutPembayaranNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
@@ -26573,9 +27730,11 @@ export const PembayaranUncheckedUpdateWithoutLogInputSchema: z.ZodType<Prisma.Pe
   bankId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
@@ -26602,6 +27761,7 @@ export const UserUpdateWithoutLog_bayarInputSchema: z.ZodType<Prisma.UserUpdateW
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -26649,6 +27809,7 @@ export const UserUpdateWithoutLog_bayarInputSchema: z.ZodType<Prisma.UserUpdateW
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutLog_bayarInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutLog_bayarInput> = z.object({
@@ -26663,6 +27824,7 @@ export const UserUncheckedUpdateWithoutLog_bayarInputSchema: z.ZodType<Prisma.Us
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -26710,6 +27872,43 @@ export const UserUncheckedUpdateWithoutLog_bayarInputSchema: z.ZodType<Prisma.Us
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpsertWithoutLogBayarInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpsertWithoutLogBayarInput> = z.object({
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutLogBayarInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutLogBayarInputSchema) ]),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutLogBayarInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutLogBayarInputSchema) ]),
+  where: z.lazy(() => KomisiPetugasEntriWhereInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpdateToOneWithWhereWithoutLogBayarInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateToOneWithWhereWithoutLogBayarInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereInputSchema).optional(),
+  data: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutLogBayarInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutLogBayarInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriUpdateWithoutLogBayarInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateWithoutLogBayarInput> = z.object({
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  penagih: z.lazy(() => PenagihUpdateOneRequiredWithoutKomisiNestedInputSchema).optional(),
+  actor: z.lazy(() => UserUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  pelanggan: z.lazy(() => PelangganUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  pembayaran: z.lazy(() => PembayaranUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversedByNestedInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversesNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateWithoutLogBayarInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateWithoutLogBayarInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  penagihId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  actorUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pelangganId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaranId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  reversesId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedUpdateOneWithoutReversesNestedInputSchema).optional(),
 }).strict();
 
 export const UserCreateWithoutPembayaran_mitraInputSchema: z.ZodType<Prisma.UserCreateWithoutPembayaran_mitraInput> = z.object({
@@ -26723,6 +27922,7 @@ export const UserCreateWithoutPembayaran_mitraInputSchema: z.ZodType<Prisma.User
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -26770,6 +27970,7 @@ export const UserCreateWithoutPembayaran_mitraInputSchema: z.ZodType<Prisma.User
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutPembayaran_mitraInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutPembayaran_mitraInput> = z.object({
@@ -26784,6 +27985,7 @@ export const UserUncheckedCreateWithoutPembayaran_mitraInputSchema: z.ZodType<Pr
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -26831,6 +28033,7 @@ export const UserUncheckedCreateWithoutPembayaran_mitraInputSchema: z.ZodType<Pr
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutPembayaran_mitraInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutPembayaran_mitraInput> = z.object({
@@ -26915,6 +28118,7 @@ export const UserUpdateWithoutPembayaran_mitraInputSchema: z.ZodType<Prisma.User
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -26962,6 +28166,7 @@ export const UserUpdateWithoutPembayaran_mitraInputSchema: z.ZodType<Prisma.User
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutPembayaran_mitraInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutPembayaran_mitraInput> = z.object({
@@ -26976,6 +28181,7 @@ export const UserUncheckedUpdateWithoutPembayaran_mitraInputSchema: z.ZodType<Pr
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -27023,6 +28229,7 @@ export const UserUncheckedUpdateWithoutPembayaran_mitraInputSchema: z.ZodType<Pr
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const BankUpsertWithoutPembayaran_mitraInputSchema: z.ZodType<Prisma.BankUpsertWithoutPembayaran_mitraInput> = z.object({
@@ -27328,6 +28535,7 @@ export const UserCreateWithoutPengeluaranInputSchema: z.ZodType<Prisma.UserCreat
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -27375,6 +28583,7 @@ export const UserCreateWithoutPengeluaranInputSchema: z.ZodType<Prisma.UserCreat
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutPengeluaranInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutPengeluaranInput> = z.object({
@@ -27389,6 +28598,7 @@ export const UserUncheckedCreateWithoutPengeluaranInputSchema: z.ZodType<Prisma.
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -27436,6 +28646,7 @@ export const UserUncheckedCreateWithoutPengeluaranInputSchema: z.ZodType<Prisma.
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutPengeluaranInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutPengeluaranInput> = z.object({
@@ -27465,6 +28676,7 @@ export const UserUpdateWithoutPengeluaranInputSchema: z.ZodType<Prisma.UserUpdat
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -27512,6 +28724,7 @@ export const UserUpdateWithoutPengeluaranInputSchema: z.ZodType<Prisma.UserUpdat
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutPengeluaranInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutPengeluaranInput> = z.object({
@@ -27526,6 +28739,7 @@ export const UserUncheckedUpdateWithoutPengeluaranInputSchema: z.ZodType<Prisma.
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -27573,6 +28787,7 @@ export const UserUncheckedUpdateWithoutPengeluaranInputSchema: z.ZodType<Prisma.
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserCreateWithoutRegulatory_settingsInputSchema: z.ZodType<Prisma.UserCreateWithoutRegulatory_settingsInput> = z.object({
@@ -27586,6 +28801,7 @@ export const UserCreateWithoutRegulatory_settingsInputSchema: z.ZodType<Prisma.U
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -27633,6 +28849,7 @@ export const UserCreateWithoutRegulatory_settingsInputSchema: z.ZodType<Prisma.U
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutRegulatory_settingsInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutRegulatory_settingsInput> = z.object({
@@ -27647,6 +28864,7 @@ export const UserUncheckedCreateWithoutRegulatory_settingsInputSchema: z.ZodType
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -27694,6 +28912,7 @@ export const UserUncheckedCreateWithoutRegulatory_settingsInputSchema: z.ZodType
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutRegulatory_settingsInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutRegulatory_settingsInput> = z.object({
@@ -27723,6 +28942,7 @@ export const UserUpdateWithoutRegulatory_settingsInputSchema: z.ZodType<Prisma.U
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -27770,6 +28990,7 @@ export const UserUpdateWithoutRegulatory_settingsInputSchema: z.ZodType<Prisma.U
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutRegulatory_settingsInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutRegulatory_settingsInput> = z.object({
@@ -27784,6 +29005,7 @@ export const UserUncheckedUpdateWithoutRegulatory_settingsInputSchema: z.ZodType
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -27831,6 +29053,7 @@ export const UserUncheckedUpdateWithoutRegulatory_settingsInputSchema: z.ZodType
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserCreateWithoutRegulatory_reportsInputSchema: z.ZodType<Prisma.UserCreateWithoutRegulatory_reportsInput> = z.object({
@@ -27844,6 +29067,7 @@ export const UserCreateWithoutRegulatory_reportsInputSchema: z.ZodType<Prisma.Us
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -27891,6 +29115,7 @@ export const UserCreateWithoutRegulatory_reportsInputSchema: z.ZodType<Prisma.Us
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutRegulatory_reportsInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutRegulatory_reportsInput> = z.object({
@@ -27905,6 +29130,7 @@ export const UserUncheckedCreateWithoutRegulatory_reportsInputSchema: z.ZodType<
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -27952,6 +29178,7 @@ export const UserUncheckedCreateWithoutRegulatory_reportsInputSchema: z.ZodType<
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutRegulatory_reportsInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutRegulatory_reportsInput> = z.object({
@@ -27981,6 +29208,7 @@ export const UserUpdateWithoutRegulatory_reportsInputSchema: z.ZodType<Prisma.Us
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -28028,6 +29256,7 @@ export const UserUpdateWithoutRegulatory_reportsInputSchema: z.ZodType<Prisma.Us
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutRegulatory_reportsInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutRegulatory_reportsInput> = z.object({
@@ -28042,6 +29271,7 @@ export const UserUncheckedUpdateWithoutRegulatory_reportsInputSchema: z.ZodType<
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -28089,6 +29319,7 @@ export const UserUncheckedUpdateWithoutRegulatory_reportsInputSchema: z.ZodType<
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateWithoutStatus_logsInputSchema: z.ZodType<Prisma.PelangganCreateWithoutStatus_logsInput> = z.object({
@@ -28120,6 +29351,7 @@ export const PelangganCreateWithoutStatus_logsInputSchema: z.ZodType<Prisma.Pela
   tagihanDihapus: z.lazy(() => TagihanDihapusCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedCreateWithoutStatus_logsInputSchema: z.ZodType<Prisma.PelangganUncheckedCreateWithoutStatus_logsInput> = z.object({
@@ -28152,6 +29384,7 @@ export const PelangganUncheckedCreateWithoutStatus_logsInputSchema: z.ZodType<Pr
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateOrConnectWithoutStatus_logsInputSchema: z.ZodType<Prisma.PelangganCreateOrConnectWithoutStatus_logsInput> = z.object({
@@ -28199,6 +29432,7 @@ export const PelangganUpdateWithoutStatus_logsInputSchema: z.ZodType<Prisma.Pela
   tagihanDihapus: z.lazy(() => TagihanDihapusUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateWithoutStatus_logsInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateWithoutStatus_logsInput> = z.object({
@@ -28231,6 +29465,7 @@ export const PelangganUncheckedUpdateWithoutStatus_logsInputSchema: z.ZodType<Pr
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateWithoutPortalTiketInputSchema: z.ZodType<Prisma.PelangganCreateWithoutPortalTiketInput> = z.object({
@@ -28262,6 +29497,7 @@ export const PelangganCreateWithoutPortalTiketInputSchema: z.ZodType<Prisma.Pela
   tagihanDihapus: z.lazy(() => TagihanDihapusCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedCreateWithoutPortalTiketInputSchema: z.ZodType<Prisma.PelangganUncheckedCreateWithoutPortalTiketInput> = z.object({
@@ -28294,6 +29530,7 @@ export const PelangganUncheckedCreateWithoutPortalTiketInputSchema: z.ZodType<Pr
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateOrConnectWithoutPortalTiketInputSchema: z.ZodType<Prisma.PelangganCreateOrConnectWithoutPortalTiketInput> = z.object({
@@ -28312,6 +29549,7 @@ export const UserCreateWithoutPortalTiketInputSchema: z.ZodType<Prisma.UserCreat
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -28359,6 +29597,7 @@ export const UserCreateWithoutPortalTiketInputSchema: z.ZodType<Prisma.UserCreat
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutPortalTiketInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutPortalTiketInput> = z.object({
@@ -28373,6 +29612,7 @@ export const UserUncheckedCreateWithoutPortalTiketInputSchema: z.ZodType<Prisma.
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -28420,6 +29660,7 @@ export const UserUncheckedCreateWithoutPortalTiketInputSchema: z.ZodType<Prisma.
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutPortalTiketInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutPortalTiketInput> = z.object({
@@ -28438,6 +29679,7 @@ export const UserCreateWithoutPortalTiketDiprosesInputSchema: z.ZodType<Prisma.U
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -28485,6 +29727,7 @@ export const UserCreateWithoutPortalTiketDiprosesInputSchema: z.ZodType<Prisma.U
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutPortalTiketDiprosesInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutPortalTiketDiprosesInput> = z.object({
@@ -28499,6 +29742,7 @@ export const UserUncheckedCreateWithoutPortalTiketDiprosesInputSchema: z.ZodType
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -28546,6 +29790,7 @@ export const UserUncheckedCreateWithoutPortalTiketDiprosesInputSchema: z.ZodType
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutPortalTiketDiprosesInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutPortalTiketDiprosesInput> = z.object({
@@ -28593,6 +29838,7 @@ export const PelangganUpdateWithoutPortalTiketInputSchema: z.ZodType<Prisma.Pela
   tagihanDihapus: z.lazy(() => TagihanDihapusUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateWithoutPortalTiketInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateWithoutPortalTiketInput> = z.object({
@@ -28625,6 +29871,7 @@ export const PelangganUncheckedUpdateWithoutPortalTiketInputSchema: z.ZodType<Pr
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const UserUpsertWithoutPortalTiketInputSchema: z.ZodType<Prisma.UserUpsertWithoutPortalTiketInput> = z.object({
@@ -28649,6 +29896,7 @@ export const UserUpdateWithoutPortalTiketInputSchema: z.ZodType<Prisma.UserUpdat
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -28696,6 +29944,7 @@ export const UserUpdateWithoutPortalTiketInputSchema: z.ZodType<Prisma.UserUpdat
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutPortalTiketInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutPortalTiketInput> = z.object({
@@ -28710,6 +29959,7 @@ export const UserUncheckedUpdateWithoutPortalTiketInputSchema: z.ZodType<Prisma.
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -28757,6 +30007,7 @@ export const UserUncheckedUpdateWithoutPortalTiketInputSchema: z.ZodType<Prisma.
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUpsertWithoutPortalTiketDiprosesInputSchema: z.ZodType<Prisma.UserUpsertWithoutPortalTiketDiprosesInput> = z.object({
@@ -28781,6 +30032,7 @@ export const UserUpdateWithoutPortalTiketDiprosesInputSchema: z.ZodType<Prisma.U
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -28828,6 +30080,7 @@ export const UserUpdateWithoutPortalTiketDiprosesInputSchema: z.ZodType<Prisma.U
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutPortalTiketDiprosesInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutPortalTiketDiprosesInput> = z.object({
@@ -28842,6 +30095,7 @@ export const UserUncheckedUpdateWithoutPortalTiketDiprosesInputSchema: z.ZodType
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -28889,6 +30143,7 @@ export const UserUncheckedUpdateWithoutPortalTiketDiprosesInputSchema: z.ZodType
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserCreateWithoutAuto_isolir_settingsInputSchema: z.ZodType<Prisma.UserCreateWithoutAuto_isolir_settingsInput> = z.object({
@@ -28902,6 +30157,7 @@ export const UserCreateWithoutAuto_isolir_settingsInputSchema: z.ZodType<Prisma.
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -28949,6 +30205,7 @@ export const UserCreateWithoutAuto_isolir_settingsInputSchema: z.ZodType<Prisma.
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutAuto_isolir_settingsInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutAuto_isolir_settingsInput> = z.object({
@@ -28963,6 +30220,7 @@ export const UserUncheckedCreateWithoutAuto_isolir_settingsInputSchema: z.ZodTyp
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -29010,6 +30268,7 @@ export const UserUncheckedCreateWithoutAuto_isolir_settingsInputSchema: z.ZodTyp
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutAuto_isolir_settingsInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutAuto_isolir_settingsInput> = z.object({
@@ -29039,6 +30298,7 @@ export const UserUpdateWithoutAuto_isolir_settingsInputSchema: z.ZodType<Prisma.
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -29086,6 +30346,7 @@ export const UserUpdateWithoutAuto_isolir_settingsInputSchema: z.ZodType<Prisma.
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutAuto_isolir_settingsInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutAuto_isolir_settingsInput> = z.object({
@@ -29100,6 +30361,7 @@ export const UserUncheckedUpdateWithoutAuto_isolir_settingsInputSchema: z.ZodTyp
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -29147,6 +30409,7 @@ export const UserUncheckedUpdateWithoutAuto_isolir_settingsInputSchema: z.ZodTyp
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserCreateWithoutInvoiceSettingsInputSchema: z.ZodType<Prisma.UserCreateWithoutInvoiceSettingsInput> = z.object({
@@ -29160,6 +30423,7 @@ export const UserCreateWithoutInvoiceSettingsInputSchema: z.ZodType<Prisma.UserC
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -29207,6 +30471,7 @@ export const UserCreateWithoutInvoiceSettingsInputSchema: z.ZodType<Prisma.UserC
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutInvoiceSettingsInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutInvoiceSettingsInput> = z.object({
@@ -29221,6 +30486,7 @@ export const UserUncheckedCreateWithoutInvoiceSettingsInputSchema: z.ZodType<Pri
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -29268,6 +30534,7 @@ export const UserUncheckedCreateWithoutInvoiceSettingsInputSchema: z.ZodType<Pri
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutInvoiceSettingsInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutInvoiceSettingsInput> = z.object({
@@ -29297,6 +30564,7 @@ export const UserUpdateWithoutInvoiceSettingsInputSchema: z.ZodType<Prisma.UserU
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -29344,6 +30612,7 @@ export const UserUpdateWithoutInvoiceSettingsInputSchema: z.ZodType<Prisma.UserU
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutInvoiceSettingsInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutInvoiceSettingsInput> = z.object({
@@ -29358,6 +30627,7 @@ export const UserUncheckedUpdateWithoutInvoiceSettingsInputSchema: z.ZodType<Pri
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -29405,6 +30675,7 @@ export const UserUncheckedUpdateWithoutInvoiceSettingsInputSchema: z.ZodType<Pri
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserCreateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma.UserCreateWithoutAuto_isolir_logsInput> = z.object({
@@ -29418,6 +30689,7 @@ export const UserCreateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma.User
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -29465,6 +30737,7 @@ export const UserCreateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma.User
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutAuto_isolir_logsInput> = z.object({
@@ -29479,6 +30752,7 @@ export const UserUncheckedCreateWithoutAuto_isolir_logsInputSchema: z.ZodType<Pr
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -29526,6 +30800,7 @@ export const UserUncheckedCreateWithoutAuto_isolir_logsInputSchema: z.ZodType<Pr
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutAuto_isolir_logsInput> = z.object({
@@ -29562,6 +30837,7 @@ export const PelangganCreateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma
   tagihanDihapus: z.lazy(() => TagihanDihapusCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedCreateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma.PelangganUncheckedCreateWithoutAuto_isolir_logsInput> = z.object({
@@ -29594,6 +30870,7 @@ export const PelangganUncheckedCreateWithoutAuto_isolir_logsInputSchema: z.ZodTy
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedOneWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateOrConnectWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma.PelangganCreateOrConnectWithoutAuto_isolir_logsInput> = z.object({
@@ -29608,6 +30885,7 @@ export const PembayaranCreateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prism
   total: z.number(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
@@ -29615,6 +30893,7 @@ export const PembayaranCreateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prism
   paket: z.lazy(() => PaketCreateNestedOneWithoutPembayaranInputSchema),
   bank: z.lazy(() => BankCreateNestedOneWithoutPembayaranInputSchema).optional(),
   log: z.lazy(() => LogBayarCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPembayaranInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
 
@@ -29629,10 +30908,12 @@ export const PembayaranUncheckedCreateWithoutAuto_isolir_logsInputSchema: z.ZodT
   bankId: z.number().int().optional().nullable(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   log: z.lazy(() => LogBayarUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
 }).strict();
 
@@ -29717,6 +30998,7 @@ export const UserUpdateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma.User
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -29764,6 +31046,7 @@ export const UserUpdateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma.User
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutAuto_isolir_logsInput> = z.object({
@@ -29778,6 +31061,7 @@ export const UserUncheckedUpdateWithoutAuto_isolir_logsInputSchema: z.ZodType<Pr
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -29825,6 +31109,7 @@ export const UserUncheckedUpdateWithoutAuto_isolir_logsInputSchema: z.ZodType<Pr
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUpsertWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma.PelangganUpsertWithoutAuto_isolir_logsInput> = z.object({
@@ -29867,6 +31152,7 @@ export const PelangganUpdateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma
   tagihanDihapus: z.lazy(() => TagihanDihapusUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateWithoutAuto_isolir_logsInput> = z.object({
@@ -29899,6 +31185,7 @@ export const PelangganUncheckedUpdateWithoutAuto_isolir_logsInputSchema: z.ZodTy
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PembayaranUpsertWithoutAuto_isolir_logsInputSchema: z.ZodType<Prisma.PembayaranUpsertWithoutAuto_isolir_logsInput> = z.object({
@@ -29919,6 +31206,7 @@ export const PembayaranUpdateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prism
   total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
@@ -29926,6 +31214,7 @@ export const PembayaranUpdateWithoutAuto_isolir_logsInputSchema: z.ZodType<Prism
   paket: z.lazy(() => PaketUpdateOneRequiredWithoutPembayaranNestedInputSchema).optional(),
   bank: z.lazy(() => BankUpdateOneWithoutPembayaranNestedInputSchema).optional(),
   log: z.lazy(() => LogBayarUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
 
@@ -29940,10 +31229,12 @@ export const PembayaranUncheckedUpdateWithoutAuto_isolir_logsInputSchema: z.ZodT
   bankId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   log: z.lazy(() => LogBayarUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
 
@@ -30018,6 +31309,7 @@ export const UserCreateWithoutBilling_generate_logsInputSchema: z.ZodType<Prisma
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -30065,6 +31357,7 @@ export const UserCreateWithoutBilling_generate_logsInputSchema: z.ZodType<Prisma
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutBilling_generate_logsInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutBilling_generate_logsInput> = z.object({
@@ -30079,6 +31372,7 @@ export const UserUncheckedCreateWithoutBilling_generate_logsInputSchema: z.ZodTy
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -30126,6 +31420,7 @@ export const UserUncheckedCreateWithoutBilling_generate_logsInputSchema: z.ZodTy
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutBilling_generate_logsInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutBilling_generate_logsInput> = z.object({
@@ -30155,6 +31450,7 @@ export const UserUpdateWithoutBilling_generate_logsInputSchema: z.ZodType<Prisma
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -30202,6 +31498,7 @@ export const UserUpdateWithoutBilling_generate_logsInputSchema: z.ZodType<Prisma
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutBilling_generate_logsInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutBilling_generate_logsInput> = z.object({
@@ -30216,6 +31513,7 @@ export const UserUncheckedUpdateWithoutBilling_generate_logsInputSchema: z.ZodTy
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -30263,6 +31561,7 @@ export const UserUncheckedUpdateWithoutBilling_generate_logsInputSchema: z.ZodTy
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserCreateWithoutPenagihInputSchema: z.ZodType<Prisma.UserCreateWithoutPenagihInput> = z.object({
@@ -30276,6 +31575,7 @@ export const UserCreateWithoutPenagihInputSchema: z.ZodType<Prisma.UserCreateWit
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -30323,6 +31623,7 @@ export const UserCreateWithoutPenagihInputSchema: z.ZodType<Prisma.UserCreateWit
   portalBersamaAnggota: z.lazy(() => PortalBersamaMitraCreateNestedManyWithoutUserInputSchema).optional(),
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutPenagihInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutPenagihInput> = z.object({
@@ -30337,6 +31638,7 @@ export const UserUncheckedCreateWithoutPenagihInputSchema: z.ZodType<Prisma.User
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -30384,6 +31686,7 @@ export const UserUncheckedCreateWithoutPenagihInputSchema: z.ZodType<Prisma.User
   portalBersamaAnggota: z.lazy(() => PortalBersamaMitraUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutPenagihInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutPenagihInput> = z.object({
@@ -30402,6 +31705,7 @@ export const UserCreateWithoutPenagihAkunInputSchema: z.ZodType<Prisma.UserCreat
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -30449,6 +31753,7 @@ export const UserCreateWithoutPenagihAkunInputSchema: z.ZodType<Prisma.UserCreat
   portalBersamaAnggota: z.lazy(() => PortalBersamaMitraCreateNestedManyWithoutUserInputSchema).optional(),
   tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedCreateWithoutPenagihAkunInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutPenagihAkunInput> = z.object({
@@ -30463,6 +31768,7 @@ export const UserUncheckedCreateWithoutPenagihAkunInputSchema: z.ZodType<Prisma.
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   parentId: z.number().int().optional().nullable(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
@@ -30510,6 +31816,7 @@ export const UserUncheckedCreateWithoutPenagihAkunInputSchema: z.ZodType<Prisma.
   portalBersamaAnggota: z.lazy(() => PortalBersamaMitraUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
   tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutActorInputSchema).optional(),
 }).strict();
 
 export const UserCreateOrConnectWithoutPenagihAkunInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutPenagihAkunInput> = z.object({
@@ -30601,6 +31908,41 @@ export const PenagihPenugasanLogCreateManyKePenagihInputEnvelopeSchema: z.ZodTyp
   skipDuplicates: z.boolean().optional(),
 }).strict();
 
+export const KomisiPetugasEntriCreateWithoutPenagihInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateWithoutPenagihInput> = z.object({
+  ownerUserId: z.number().int(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  actor: z.lazy(() => UserCreateNestedOneWithoutKomisiPetugasInputSchema),
+  pelanggan: z.lazy(() => PelangganCreateNestedOneWithoutKomisiPetugasInputSchema),
+  pembayaran: z.lazy(() => PembayaranCreateNestedOneWithoutKomisiPetugasInputSchema),
+  logBayar: z.lazy(() => LogBayarCreateNestedOneWithoutKomisiPetugasInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversedByInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedCreateWithoutPenagihInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateWithoutPenagihInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  actorUserId: z.number().int(),
+  pelangganId: z.number().int(),
+  pembayaranId: z.number().int(),
+  logBayarId: z.number().int().optional().nullable(),
+  reversesId: z.number().int().optional().nullable(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriCreateOrConnectWithoutPenagihInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateOrConnectWithoutPenagihInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPenagihInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriCreateManyPenagihInputEnvelopeSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateManyPenagihInputEnvelope> = z.object({
+  data: z.union([ z.lazy(() => KomisiPetugasEntriCreateManyPenagihInputSchema), z.lazy(() => KomisiPetugasEntriCreateManyPenagihInputSchema).array() ]),
+  skipDuplicates: z.boolean().optional(),
+}).strict();
+
 export const UserUpsertWithoutPenagihInputSchema: z.ZodType<Prisma.UserUpsertWithoutPenagihInput> = z.object({
   update: z.union([ z.lazy(() => UserUpdateWithoutPenagihInputSchema), z.lazy(() => UserUncheckedUpdateWithoutPenagihInputSchema) ]),
   create: z.union([ z.lazy(() => UserCreateWithoutPenagihInputSchema), z.lazy(() => UserUncheckedCreateWithoutPenagihInputSchema) ]),
@@ -30623,6 +31965,7 @@ export const UserUpdateWithoutPenagihInputSchema: z.ZodType<Prisma.UserUpdateWit
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -30670,6 +32013,7 @@ export const UserUpdateWithoutPenagihInputSchema: z.ZodType<Prisma.UserUpdateWit
   portalBersamaAnggota: z.lazy(() => PortalBersamaMitraUpdateManyWithoutUserNestedInputSchema).optional(),
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutPenagihInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutPenagihInput> = z.object({
@@ -30684,6 +32028,7 @@ export const UserUncheckedUpdateWithoutPenagihInputSchema: z.ZodType<Prisma.User
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -30731,6 +32076,7 @@ export const UserUncheckedUpdateWithoutPenagihInputSchema: z.ZodType<Prisma.User
   portalBersamaAnggota: z.lazy(() => PortalBersamaMitraUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUpsertWithoutPenagihAkunInputSchema: z.ZodType<Prisma.UserUpsertWithoutPenagihAkunInput> = z.object({
@@ -30755,6 +32101,7 @@ export const UserUpdateWithoutPenagihAkunInputSchema: z.ZodType<Prisma.UserUpdat
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -30802,6 +32149,7 @@ export const UserUpdateWithoutPenagihAkunInputSchema: z.ZodType<Prisma.UserUpdat
   portalBersamaAnggota: z.lazy(() => PortalBersamaMitraUpdateManyWithoutUserNestedInputSchema).optional(),
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutPenagihAkunInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutPenagihAkunInput> = z.object({
@@ -30816,6 +32164,7 @@ export const UserUncheckedUpdateWithoutPenagihAkunInputSchema: z.ZodType<Prisma.
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -30863,6 +32212,7 @@ export const UserUncheckedUpdateWithoutPenagihAkunInputSchema: z.ZodType<Prisma.
   portalBersamaAnggota: z.lazy(() => PortalBersamaMitraUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const PenagihPenugasanUpsertWithWhereUniqueWithoutPenagihInputSchema: z.ZodType<Prisma.PenagihPenugasanUpsertWithWhereUniqueWithoutPenagihInput> = z.object({
@@ -30923,6 +32273,22 @@ export const PenagihPenugasanLogUpdateManyWithWhereWithoutKePenagihInputSchema: 
   data: z.union([ z.lazy(() => PenagihPenugasanLogUpdateManyMutationInputSchema), z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutKePenagihInputSchema) ]),
 }).strict();
 
+export const KomisiPetugasEntriUpsertWithWhereUniqueWithoutPenagihInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpsertWithWhereUniqueWithoutPenagihInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutPenagihInputSchema) ]),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutPenagihInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriUpdateWithWhereUniqueWithoutPenagihInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateWithWhereUniqueWithoutPenagihInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  data: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutPenagihInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutPenagihInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriUpdateManyWithWhereWithoutPenagihInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateManyWithWhereWithoutPenagihInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriScalarWhereInputSchema),
+  data: z.union([ z.lazy(() => KomisiPetugasEntriUpdateManyMutationInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPenagihInputSchema) ]),
+}).strict();
+
 export const PelangganCreateWithoutPenagihPenugasanInputSchema: z.ZodType<Prisma.PelangganCreateWithoutPenagihPenugasanInput> = z.object({
   nama: z.string().min(1, { message: "Required" }),
   nik: z.string().optional().nullable(),
@@ -30952,6 +32318,7 @@ export const PelangganCreateWithoutPenagihPenugasanInputSchema: z.ZodType<Prisma
   portalTiket: z.lazy(() => PortalTiketCreateNestedManyWithoutPelangganInputSchema).optional(),
   tagihanDihapus: z.lazy(() => TagihanDihapusCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedCreateWithoutPenagihPenugasanInputSchema: z.ZodType<Prisma.PelangganUncheckedCreateWithoutPenagihPenugasanInput> = z.object({
@@ -30984,6 +32351,7 @@ export const PelangganUncheckedCreateWithoutPenagihPenugasanInputSchema: z.ZodTy
   portalTiket: z.lazy(() => PortalTiketUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateOrConnectWithoutPenagihPenugasanInputSchema: z.ZodType<Prisma.PelangganCreateOrConnectWithoutPenagihPenugasanInput> = z.object({
@@ -30995,12 +32363,14 @@ export const PenagihCreateWithoutPenugasanInputSchema: z.ZodType<Prisma.PenagihC
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   owner: z.lazy(() => UserCreateNestedOneWithoutPenagihInputSchema),
   akun: z.lazy(() => UserCreateNestedOneWithoutPenagihAkunInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutDariPenagihInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutKePenagihInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPenagihInputSchema).optional(),
 }).strict();
 
 export const PenagihUncheckedCreateWithoutPenugasanInputSchema: z.ZodType<Prisma.PenagihUncheckedCreateWithoutPenugasanInput> = z.object({
@@ -31010,10 +32380,12 @@ export const PenagihUncheckedCreateWithoutPenugasanInputSchema: z.ZodType<Prisma
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutDariPenagihInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutKePenagihInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPenagihInputSchema).optional(),
 }).strict();
 
 export const PenagihCreateOrConnectWithoutPenugasanInputSchema: z.ZodType<Prisma.PenagihCreateOrConnectWithoutPenugasanInput> = z.object({
@@ -31061,6 +32433,7 @@ export const PelangganUpdateWithoutPenagihPenugasanInputSchema: z.ZodType<Prisma
   portalTiket: z.lazy(() => PortalTiketUpdateManyWithoutPelangganNestedInputSchema).optional(),
   tagihanDihapus: z.lazy(() => TagihanDihapusUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateWithoutPenagihPenugasanInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateWithoutPenagihPenugasanInput> = z.object({
@@ -31093,6 +32466,7 @@ export const PelangganUncheckedUpdateWithoutPenagihPenugasanInputSchema: z.ZodTy
   portalTiket: z.lazy(() => PortalTiketUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PenagihUpsertWithoutPenugasanInputSchema: z.ZodType<Prisma.PenagihUpsertWithoutPenugasanInput> = z.object({
@@ -31110,12 +32484,14 @@ export const PenagihUpdateWithoutPenugasanInputSchema: z.ZodType<Prisma.PenagihU
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   owner: z.lazy(() => UserUpdateOneRequiredWithoutPenagihNestedInputSchema).optional(),
   akun: z.lazy(() => UserUpdateOneWithoutPenagihAkunNestedInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutDariPenagihNestedInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutKePenagihNestedInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPenagihNestedInputSchema).optional(),
 }).strict();
 
 export const PenagihUncheckedUpdateWithoutPenugasanInputSchema: z.ZodType<Prisma.PenagihUncheckedUpdateWithoutPenugasanInput> = z.object({
@@ -31125,10 +32501,12 @@ export const PenagihUncheckedUpdateWithoutPenugasanInputSchema: z.ZodType<Prisma
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutDariPenagihNestedInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutKePenagihNestedInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPenagihNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateWithoutPenagihPenugasanLogInputSchema: z.ZodType<Prisma.PelangganCreateWithoutPenagihPenugasanLogInput> = z.object({
@@ -31160,6 +32538,7 @@ export const PelangganCreateWithoutPenagihPenugasanLogInputSchema: z.ZodType<Pri
   portalTiket: z.lazy(() => PortalTiketCreateNestedManyWithoutPelangganInputSchema).optional(),
   tagihanDihapus: z.lazy(() => TagihanDihapusCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanCreateNestedOneWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedCreateWithoutPenagihPenugasanLogInputSchema: z.ZodType<Prisma.PelangganUncheckedCreateWithoutPenagihPenugasanLogInput> = z.object({
@@ -31192,6 +32571,7 @@ export const PelangganUncheckedCreateWithoutPenagihPenugasanLogInputSchema: z.Zo
   portalTiket: z.lazy(() => PortalTiketUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedOneWithoutPelangganInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
 }).strict();
 
 export const PelangganCreateOrConnectWithoutPenagihPenugasanLogInputSchema: z.ZodType<Prisma.PelangganCreateOrConnectWithoutPenagihPenugasanLogInput> = z.object({
@@ -31203,12 +32583,14 @@ export const PenagihCreateWithoutLogDariInputSchema: z.ZodType<Prisma.PenagihCre
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   owner: z.lazy(() => UserCreateNestedOneWithoutPenagihInputSchema),
   akun: z.lazy(() => UserCreateNestedOneWithoutPenagihAkunInputSchema).optional(),
   penugasan: z.lazy(() => PenagihPenugasanCreateNestedManyWithoutPenagihInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutKePenagihInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPenagihInputSchema).optional(),
 }).strict();
 
 export const PenagihUncheckedCreateWithoutLogDariInputSchema: z.ZodType<Prisma.PenagihUncheckedCreateWithoutLogDariInput> = z.object({
@@ -31218,10 +32600,12 @@ export const PenagihUncheckedCreateWithoutLogDariInputSchema: z.ZodType<Prisma.P
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   penugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedManyWithoutPenagihInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutKePenagihInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPenagihInputSchema).optional(),
 }).strict();
 
 export const PenagihCreateOrConnectWithoutLogDariInputSchema: z.ZodType<Prisma.PenagihCreateOrConnectWithoutLogDariInput> = z.object({
@@ -31233,12 +32617,14 @@ export const PenagihCreateWithoutLogKeInputSchema: z.ZodType<Prisma.PenagihCreat
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   owner: z.lazy(() => UserCreateNestedOneWithoutPenagihInputSchema),
   akun: z.lazy(() => UserCreateNestedOneWithoutPenagihAkunInputSchema).optional(),
   penugasan: z.lazy(() => PenagihPenugasanCreateNestedManyWithoutPenagihInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutDariPenagihInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriCreateNestedManyWithoutPenagihInputSchema).optional(),
 }).strict();
 
 export const PenagihUncheckedCreateWithoutLogKeInputSchema: z.ZodType<Prisma.PenagihUncheckedCreateWithoutLogKeInput> = z.object({
@@ -31248,10 +32634,12 @@ export const PenagihUncheckedCreateWithoutLogKeInputSchema: z.ZodType<Prisma.Pen
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
   penugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedManyWithoutPenagihInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutDariPenagihInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedManyWithoutPenagihInputSchema).optional(),
 }).strict();
 
 export const PenagihCreateOrConnectWithoutLogKeInputSchema: z.ZodType<Prisma.PenagihCreateOrConnectWithoutLogKeInput> = z.object({
@@ -31299,6 +32687,7 @@ export const PelangganUpdateWithoutPenagihPenugasanLogInputSchema: z.ZodType<Pri
   portalTiket: z.lazy(() => PortalTiketUpdateManyWithoutPelangganNestedInputSchema).optional(),
   tagihanDihapus: z.lazy(() => TagihanDihapusUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUpdateOneWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateWithoutPenagihPenugasanLogInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateWithoutPenagihPenugasanLogInput> = z.object({
@@ -31331,6 +32720,7 @@ export const PelangganUncheckedUpdateWithoutPenagihPenugasanLogInputSchema: z.Zo
   portalTiket: z.lazy(() => PortalTiketUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateOneWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PenagihUpsertWithoutLogDariInputSchema: z.ZodType<Prisma.PenagihUpsertWithoutLogDariInput> = z.object({
@@ -31348,12 +32738,14 @@ export const PenagihUpdateWithoutLogDariInputSchema: z.ZodType<Prisma.PenagihUpd
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   owner: z.lazy(() => UserUpdateOneRequiredWithoutPenagihNestedInputSchema).optional(),
   akun: z.lazy(() => UserUpdateOneWithoutPenagihAkunNestedInputSchema).optional(),
   penugasan: z.lazy(() => PenagihPenugasanUpdateManyWithoutPenagihNestedInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutKePenagihNestedInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPenagihNestedInputSchema).optional(),
 }).strict();
 
 export const PenagihUncheckedUpdateWithoutLogDariInputSchema: z.ZodType<Prisma.PenagihUncheckedUpdateWithoutLogDariInput> = z.object({
@@ -31363,10 +32755,12 @@ export const PenagihUncheckedUpdateWithoutLogDariInputSchema: z.ZodType<Prisma.P
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   penugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateManyWithoutPenagihNestedInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutKePenagihNestedInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPenagihNestedInputSchema).optional(),
 }).strict();
 
 export const PenagihUpsertWithoutLogKeInputSchema: z.ZodType<Prisma.PenagihUpsertWithoutLogKeInput> = z.object({
@@ -31384,12 +32778,14 @@ export const PenagihUpdateWithoutLogKeInputSchema: z.ZodType<Prisma.PenagihUpdat
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   owner: z.lazy(() => UserUpdateOneRequiredWithoutPenagihNestedInputSchema).optional(),
   akun: z.lazy(() => UserUpdateOneWithoutPenagihAkunNestedInputSchema).optional(),
   penugasan: z.lazy(() => PenagihPenugasanUpdateManyWithoutPenagihNestedInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutDariPenagihNestedInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPenagihNestedInputSchema).optional(),
 }).strict();
 
 export const PenagihUncheckedUpdateWithoutLogKeInputSchema: z.ZodType<Prisma.PenagihUncheckedUpdateWithoutLogKeInput> = z.object({
@@ -31399,10 +32795,778 @@ export const PenagihUncheckedUpdateWithoutLogKeInputSchema: z.ZodType<Prisma.Pen
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   penugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateManyWithoutPenagihNestedInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutDariPenagihNestedInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPenagihNestedInputSchema).optional(),
+}).strict();
+
+export const PenagihCreateWithoutKomisiInputSchema: z.ZodType<Prisma.PenagihCreateWithoutKomisiInput> = z.object({
+  nama: z.string(),
+  nomor: z.string().optional().nullable(),
+  aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
+  created: z.coerce.date().optional(),
+  updated: z.coerce.date().optional(),
+  owner: z.lazy(() => UserCreateNestedOneWithoutPenagihInputSchema),
+  akun: z.lazy(() => UserCreateNestedOneWithoutPenagihAkunInputSchema).optional(),
+  penugasan: z.lazy(() => PenagihPenugasanCreateNestedManyWithoutPenagihInputSchema).optional(),
+  logDari: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutDariPenagihInputSchema).optional(),
+  logKe: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutKePenagihInputSchema).optional(),
+}).strict();
+
+export const PenagihUncheckedCreateWithoutKomisiInputSchema: z.ZodType<Prisma.PenagihUncheckedCreateWithoutKomisiInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  userId: z.number().int().optional().nullable(),
+  nama: z.string(),
+  nomor: z.string().optional().nullable(),
+  aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
+  created: z.coerce.date().optional(),
+  updated: z.coerce.date().optional(),
+  penugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedManyWithoutPenagihInputSchema).optional(),
+  logDari: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutDariPenagihInputSchema).optional(),
+  logKe: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutKePenagihInputSchema).optional(),
+}).strict();
+
+export const PenagihCreateOrConnectWithoutKomisiInputSchema: z.ZodType<Prisma.PenagihCreateOrConnectWithoutKomisiInput> = z.object({
+  where: z.lazy(() => PenagihWhereUniqueInputSchema),
+  create: z.union([ z.lazy(() => PenagihCreateWithoutKomisiInputSchema), z.lazy(() => PenagihUncheckedCreateWithoutKomisiInputSchema) ]),
+}).strict();
+
+export const UserCreateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.UserCreateWithoutKomisiPetugasInput> = z.object({
+  nama: z.string().min(1, { message: "Required" }),
+  user: z.string().min(1, { message: "Required" }),
+  password: z.string().min(3, { message: "Minimal 3 huruf" }),
+  identitas: z.lazy(() => IdentitasSchema).optional().nullable(),
+  file_identitas: z.string().optional().nullable(),
+  no_identitas: z.string().optional().nullable(),
+  file_npwp: z.string().optional().nullable(),
+  npwp: z.string().optional().nullable(),
+  omset: z.number().int().optional().nullable(),
+  ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
+  nomor: z.string().optional().nullable(),
+  alamat: z.string().optional().nullable(),
+  role: z.lazy(() => RoleNameSchema),
+  staffMenuKeys: z.union([ z.lazy(() => NullableJsonNullValueInputSchema), InputJsonValueSchema ]).optional(),
+  staffAllowBankPayment: z.boolean().optional().nullable(),
+  staffAllowIsolir: z.boolean().optional().nullable(),
+  staffAllowCancelPayment: z.boolean().optional().nullable(),
+  staffAllowBerhenti: z.boolean().optional().nullable(),
+  disabled: z.boolean().optional(),
+  verified: z.boolean().optional(),
+  created: z.coerce.date().optional(),
+  updated: z.coerce.date().optional(),
+  billingStartMode: z.lazy(() => BillingStartModeSchema).optional().nullable(),
+  billingStartDate: z.coerce.date().optional().nullable(),
+  revenueBasis: z.lazy(() => RevenueBasisSchema).optional(),
+  billingGenerateDay: z.number().int().optional().nullable(),
+  freeCustomerLimit: z.number().int().optional().nullable(),
+  pppPackageChangeLimit: z.number().int().optional().nullable(),
+  pppAutoFillEnabled: z.boolean().optional(),
+  portalPelangganEnabled: z.boolean().optional(),
+  portalSlug: z.string().optional().nullable(),
+  portalPinHash: z.string().optional().nullable(),
+  portalWaCs: z.string().optional().nullable(),
+  ownedByIsp: z.boolean().optional(),
+  revenueShareEnabled: z.boolean().optional(),
+  parent: z.lazy(() => UserCreateNestedOneWithoutChildsInputSchema).optional(),
+  childs: z.lazy(() => UserCreateNestedManyWithoutParentInputSchema).optional(),
+  routers: z.lazy(() => RouterCreateNestedManyWithoutUsersInputSchema).optional(),
+  paket: z.lazy(() => PaketCreateNestedManyWithoutUserInputSchema).optional(),
+  session: z.lazy(() => SessionCreateNestedManyWithoutUserInputSchema).optional(),
+  client: z.lazy(() => ClientCreateNestedOneWithoutUserInputSchema).optional(),
+  bank: z.lazy(() => BankCreateNestedManyWithoutUserInputSchema).optional(),
+  log_bayar: z.lazy(() => LogBayarCreateNestedManyWithoutUserInputSchema).optional(),
+  pembayaran_mitra: z.lazy(() => PembayaranMitraCreateNestedManyWithoutUserInputSchema).optional(),
+  pengeluaran: z.lazy(() => PengeluaranCreateNestedManyWithoutUserInputSchema).optional(),
+  regulatory_settings: z.lazy(() => RegulatorySettingsCreateNestedOneWithoutUserInputSchema).optional(),
+  regulatory_reports: z.lazy(() => RegulatoryReportCreateNestedManyWithoutUserInputSchema).optional(),
+  auto_isolir_settings: z.lazy(() => AutoIsolirSettingsCreateNestedOneWithoutUserInputSchema).optional(),
+  auto_isolir_logs: z.lazy(() => AutoIsolirLogCreateNestedManyWithoutUserInputSchema).optional(),
+  billing_generate_logs: z.lazy(() => BillingGenerateLogCreateNestedManyWithoutUserInputSchema).optional(),
+  staffPelangganScopes: z.lazy(() => StaffPelangganScopeCreateNestedManyWithoutStaffUserInputSchema).optional(),
+  invoiceSettings: z.lazy(() => InvoiceSettingsCreateNestedOneWithoutUserInputSchema).optional(),
+  portalTiket: z.lazy(() => PortalTiketCreateNestedManyWithoutUserInputSchema).optional(),
+  portalTiketDiproses: z.lazy(() => PortalTiketCreateNestedManyWithoutDiprosesOlehInputSchema).optional(),
+  portalBersamaAnggota: z.lazy(() => PortalBersamaMitraCreateNestedManyWithoutUserInputSchema).optional(),
+  tripayGateway: z.lazy(() => TripayGatewayCreateNestedOneWithoutUserInputSchema).optional(),
+  penagih: z.lazy(() => PenagihCreateNestedManyWithoutOwnerInputSchema).optional(),
+  penagihAkun: z.lazy(() => PenagihCreateNestedOneWithoutAkunInputSchema).optional(),
+}).strict();
+
+export const UserUncheckedCreateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.UserUncheckedCreateWithoutKomisiPetugasInput> = z.object({
+  id: z.number().int().optional(),
+  nama: z.string().min(1, { message: "Required" }),
+  user: z.string().min(1, { message: "Required" }),
+  password: z.string().min(3, { message: "Minimal 3 huruf" }),
+  identitas: z.lazy(() => IdentitasSchema).optional().nullable(),
+  file_identitas: z.string().optional().nullable(),
+  no_identitas: z.string().optional().nullable(),
+  file_npwp: z.string().optional().nullable(),
+  npwp: z.string().optional().nullable(),
+  omset: z.number().int().optional().nullable(),
+  ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
+  parentId: z.number().int().optional().nullable(),
+  nomor: z.string().optional().nullable(),
+  alamat: z.string().optional().nullable(),
+  role: z.lazy(() => RoleNameSchema),
+  staffMenuKeys: z.union([ z.lazy(() => NullableJsonNullValueInputSchema), InputJsonValueSchema ]).optional(),
+  staffAllowBankPayment: z.boolean().optional().nullable(),
+  staffAllowIsolir: z.boolean().optional().nullable(),
+  staffAllowCancelPayment: z.boolean().optional().nullable(),
+  staffAllowBerhenti: z.boolean().optional().nullable(),
+  disabled: z.boolean().optional(),
+  verified: z.boolean().optional(),
+  created: z.coerce.date().optional(),
+  updated: z.coerce.date().optional(),
+  billingStartMode: z.lazy(() => BillingStartModeSchema).optional().nullable(),
+  billingStartDate: z.coerce.date().optional().nullable(),
+  revenueBasis: z.lazy(() => RevenueBasisSchema).optional(),
+  billingGenerateDay: z.number().int().optional().nullable(),
+  freeCustomerLimit: z.number().int().optional().nullable(),
+  pppPackageChangeLimit: z.number().int().optional().nullable(),
+  pppAutoFillEnabled: z.boolean().optional(),
+  portalPelangganEnabled: z.boolean().optional(),
+  portalSlug: z.string().optional().nullable(),
+  portalPinHash: z.string().optional().nullable(),
+  portalWaCs: z.string().optional().nullable(),
+  ownedByIsp: z.boolean().optional(),
+  revenueShareEnabled: z.boolean().optional(),
+  childs: z.lazy(() => UserUncheckedCreateNestedManyWithoutParentInputSchema).optional(),
+  routers: z.lazy(() => RouterUncheckedCreateNestedManyWithoutUsersInputSchema).optional(),
+  paket: z.lazy(() => PaketUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
+  session: z.lazy(() => SessionUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
+  client: z.lazy(() => ClientUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
+  bank: z.lazy(() => BankUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
+  log_bayar: z.lazy(() => LogBayarUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
+  pembayaran_mitra: z.lazy(() => PembayaranMitraUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
+  pengeluaran: z.lazy(() => PengeluaranUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
+  regulatory_settings: z.lazy(() => RegulatorySettingsUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
+  regulatory_reports: z.lazy(() => RegulatoryReportUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
+  auto_isolir_settings: z.lazy(() => AutoIsolirSettingsUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
+  auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
+  billing_generate_logs: z.lazy(() => BillingGenerateLogUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
+  staffPelangganScopes: z.lazy(() => StaffPelangganScopeUncheckedCreateNestedManyWithoutStaffUserInputSchema).optional(),
+  invoiceSettings: z.lazy(() => InvoiceSettingsUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
+  portalTiket: z.lazy(() => PortalTiketUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
+  portalTiketDiproses: z.lazy(() => PortalTiketUncheckedCreateNestedManyWithoutDiprosesOlehInputSchema).optional(),
+  portalBersamaAnggota: z.lazy(() => PortalBersamaMitraUncheckedCreateNestedManyWithoutUserInputSchema).optional(),
+  tripayGateway: z.lazy(() => TripayGatewayUncheckedCreateNestedOneWithoutUserInputSchema).optional(),
+  penagih: z.lazy(() => PenagihUncheckedCreateNestedManyWithoutOwnerInputSchema).optional(),
+  penagihAkun: z.lazy(() => PenagihUncheckedCreateNestedOneWithoutAkunInputSchema).optional(),
+}).strict();
+
+export const UserCreateOrConnectWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.UserCreateOrConnectWithoutKomisiPetugasInput> = z.object({
+  where: z.lazy(() => UserWhereUniqueInputSchema),
+  create: z.union([ z.lazy(() => UserCreateWithoutKomisiPetugasInputSchema), z.lazy(() => UserUncheckedCreateWithoutKomisiPetugasInputSchema) ]),
+}).strict();
+
+export const PelangganCreateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PelangganCreateWithoutKomisiPetugasInput> = z.object({
+  nama: z.string().min(1, { message: "Required" }),
+  nik: z.string().optional().nullable(),
+  alamat: z.string(),
+  nomor: z.string().min(1, { message: "Required" }),
+  email: z.string(),
+  foto: z.string().optional().nullable(),
+  lat: z.string().optional().nullable(),
+  lng: z.string().optional().nullable(),
+  tgl: z.string().min(1, { message: "Required" }),
+  stop: z.boolean().optional(),
+  tgl_stop: z.string().optional().nullable(),
+  tgl_isolir: z.number().int().optional().nullable(),
+  autoFilledAt: z.coerce.date().optional().nullable(),
+  isFreeCustomer: z.boolean().optional(),
+  noLayanan: z.string(),
+  portalPinHash: z.string().optional().nullable(),
+  created: z.coerce.date().optional(),
+  updated: z.coerce.date().optional(),
+  ppp_secret: z.lazy(() => PppSecretCreateNestedOneWithoutPelangganInputSchema).optional(),
+  paket: z.lazy(() => PaketCreateNestedOneWithoutPelangganInputSchema),
+  router: z.lazy(() => RouterCreateNestedOneWithoutPelangganInputSchema),
+  pembayaran: z.lazy(() => PembayaranCreateNestedManyWithoutPelangganInputSchema).optional(),
+  auto_isolir_logs: z.lazy(() => AutoIsolirLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+  status_logs: z.lazy(() => PelangganStatusLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+  staffPelangganScopes: z.lazy(() => StaffPelangganScopeCreateNestedManyWithoutPelangganInputSchema).optional(),
+  portalTiket: z.lazy(() => PortalTiketCreateNestedManyWithoutPelangganInputSchema).optional(),
+  tagihanDihapus: z.lazy(() => TagihanDihapusCreateNestedManyWithoutPelangganInputSchema).optional(),
+  penagihPenugasan: z.lazy(() => PenagihPenugasanCreateNestedOneWithoutPelangganInputSchema).optional(),
+  penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogCreateNestedManyWithoutPelangganInputSchema).optional(),
+}).strict();
+
+export const PelangganUncheckedCreateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PelangganUncheckedCreateWithoutKomisiPetugasInput> = z.object({
+  id: z.number().int().optional(),
+  routerId: z.number().int(),
+  nama: z.string().min(1, { message: "Required" }),
+  nik: z.string().optional().nullable(),
+  alamat: z.string(),
+  nomor: z.string().min(1, { message: "Required" }),
+  email: z.string(),
+  foto: z.string().optional().nullable(),
+  lat: z.string().optional().nullable(),
+  lng: z.string().optional().nullable(),
+  tgl: z.string().min(1, { message: "Required" }),
+  stop: z.boolean().optional(),
+  tgl_stop: z.string().optional().nullable(),
+  tgl_isolir: z.number().int().optional().nullable(),
+  autoFilledAt: z.coerce.date().optional().nullable(),
+  isFreeCustomer: z.boolean().optional(),
+  noLayanan: z.string(),
+  portalPinHash: z.string().optional().nullable(),
+  ppp_secretId: z.number().int().optional().nullable(),
+  paketId: z.number({ invalid_type_error: "Required" }).int(),
+  created: z.coerce.date().optional(),
+  updated: z.coerce.date().optional(),
+  pembayaran: z.lazy(() => PembayaranUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  status_logs: z.lazy(() => PelangganStatusLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  staffPelangganScopes: z.lazy(() => StaffPelangganScopeUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  portalTiket: z.lazy(() => PortalTiketUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+  penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedCreateNestedOneWithoutPelangganInputSchema).optional(),
+  penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedCreateNestedManyWithoutPelangganInputSchema).optional(),
+}).strict();
+
+export const PelangganCreateOrConnectWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PelangganCreateOrConnectWithoutKomisiPetugasInput> = z.object({
+  where: z.lazy(() => PelangganWhereUniqueInputSchema),
+  create: z.union([ z.lazy(() => PelangganCreateWithoutKomisiPetugasInputSchema), z.lazy(() => PelangganUncheckedCreateWithoutKomisiPetugasInputSchema) ]),
+}).strict();
+
+export const PembayaranCreateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PembayaranCreateWithoutKomisiPetugasInput> = z.object({
+  noInvoice: z.string(),
+  inputterId: z.number().int().optional().nullable(),
+  jatuh_tempo: z.string(),
+  total: z.number(),
+  metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
+  nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
+  status: z.lazy(() => StatusBayarSchema).optional(),
+  created: z.coerce.date().optional(),
+  updated: z.coerce.date().optional(),
+  pelanggan: z.lazy(() => PelangganCreateNestedOneWithoutPembayaranInputSchema),
+  paket: z.lazy(() => PaketCreateNestedOneWithoutPembayaranInputSchema),
+  bank: z.lazy(() => BankCreateNestedOneWithoutPembayaranInputSchema).optional(),
+  log: z.lazy(() => LogBayarCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  tripayTransaksi: z.lazy(() => TripayTransaksiCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  auto_isolir_logs: z.lazy(() => AutoIsolirLogCreateNestedManyWithoutPembayaranInputSchema).optional(),
+}).strict();
+
+export const PembayaranUncheckedCreateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PembayaranUncheckedCreateWithoutKomisiPetugasInput> = z.object({
+  id: z.number().int().optional(),
+  noInvoice: z.string(),
+  inputterId: z.number().int().optional().nullable(),
+  pelangganId: z.number().int(),
+  paketId: z.number().int(),
+  jatuh_tempo: z.string(),
+  total: z.number(),
+  bankId: z.number().int().optional().nullable(),
+  metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
+  nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
+  status: z.lazy(() => StatusBayarSchema).optional(),
+  created: z.coerce.date().optional(),
+  updated: z.coerce.date().optional(),
+  log: z.lazy(() => LogBayarUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
+  auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedCreateNestedManyWithoutPembayaranInputSchema).optional(),
+}).strict();
+
+export const PembayaranCreateOrConnectWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PembayaranCreateOrConnectWithoutKomisiPetugasInput> = z.object({
+  where: z.lazy(() => PembayaranWhereUniqueInputSchema),
+  create: z.union([ z.lazy(() => PembayaranCreateWithoutKomisiPetugasInputSchema), z.lazy(() => PembayaranUncheckedCreateWithoutKomisiPetugasInputSchema) ]),
+}).strict();
+
+export const LogBayarCreateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.LogBayarCreateWithoutKomisiPetugasInput> = z.object({
+  total: z.number(),
+  metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
+  status: z.lazy(() => StatusBayarSchema),
+  created: z.coerce.date().optional(),
+  pembayaran: z.lazy(() => PembayaranCreateNestedOneWithoutLogInputSchema),
+  user: z.lazy(() => UserCreateNestedOneWithoutLog_bayarInputSchema),
+}).strict();
+
+export const LogBayarUncheckedCreateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.LogBayarUncheckedCreateWithoutKomisiPetugasInput> = z.object({
+  id: z.number().int().optional(),
+  pembayaranId: z.number().int(),
+  total: z.number(),
+  metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
+  status: z.lazy(() => StatusBayarSchema),
+  inputterId: z.number().int(),
+  created: z.coerce.date().optional(),
+}).strict();
+
+export const LogBayarCreateOrConnectWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.LogBayarCreateOrConnectWithoutKomisiPetugasInput> = z.object({
+  where: z.lazy(() => LogBayarWhereUniqueInputSchema),
+  create: z.union([ z.lazy(() => LogBayarCreateWithoutKomisiPetugasInputSchema), z.lazy(() => LogBayarUncheckedCreateWithoutKomisiPetugasInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriCreateWithoutReversedByInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateWithoutReversedByInput> = z.object({
+  ownerUserId: z.number().int(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  penagih: z.lazy(() => PenagihCreateNestedOneWithoutKomisiInputSchema),
+  actor: z.lazy(() => UserCreateNestedOneWithoutKomisiPetugasInputSchema),
+  pelanggan: z.lazy(() => PelangganCreateNestedOneWithoutKomisiPetugasInputSchema),
+  pembayaran: z.lazy(() => PembayaranCreateNestedOneWithoutKomisiPetugasInputSchema),
+  logBayar: z.lazy(() => LogBayarCreateNestedOneWithoutKomisiPetugasInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversedByInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedCreateWithoutReversedByInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateWithoutReversedByInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  penagihId: z.number().int(),
+  actorUserId: z.number().int(),
+  pelangganId: z.number().int(),
+  pembayaranId: z.number().int(),
+  logBayarId: z.number().int().optional().nullable(),
+  reversesId: z.number().int().optional().nullable(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+}).strict();
+
+export const KomisiPetugasEntriCreateOrConnectWithoutReversedByInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateOrConnectWithoutReversedByInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutReversedByInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutReversedByInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriCreateWithoutReversesInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateWithoutReversesInput> = z.object({
+  ownerUserId: z.number().int(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  penagih: z.lazy(() => PenagihCreateNestedOneWithoutKomisiInputSchema),
+  actor: z.lazy(() => UserCreateNestedOneWithoutKomisiPetugasInputSchema),
+  pelanggan: z.lazy(() => PelangganCreateNestedOneWithoutKomisiPetugasInputSchema),
+  pembayaran: z.lazy(() => PembayaranCreateNestedOneWithoutKomisiPetugasInputSchema),
+  logBayar: z.lazy(() => LogBayarCreateNestedOneWithoutKomisiPetugasInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedCreateWithoutReversesInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedCreateWithoutReversesInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  penagihId: z.number().int(),
+  actorUserId: z.number().int(),
+  pelangganId: z.number().int(),
+  pembayaranId: z.number().int(),
+  logBayarId: z.number().int().optional().nullable(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedCreateNestedOneWithoutReversesInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriCreateOrConnectWithoutReversesInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateOrConnectWithoutReversesInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereUniqueInputSchema),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutReversesInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutReversesInputSchema) ]),
+}).strict();
+
+export const PenagihUpsertWithoutKomisiInputSchema: z.ZodType<Prisma.PenagihUpsertWithoutKomisiInput> = z.object({
+  update: z.union([ z.lazy(() => PenagihUpdateWithoutKomisiInputSchema), z.lazy(() => PenagihUncheckedUpdateWithoutKomisiInputSchema) ]),
+  create: z.union([ z.lazy(() => PenagihCreateWithoutKomisiInputSchema), z.lazy(() => PenagihUncheckedCreateWithoutKomisiInputSchema) ]),
+  where: z.lazy(() => PenagihWhereInputSchema).optional(),
+}).strict();
+
+export const PenagihUpdateToOneWithWhereWithoutKomisiInputSchema: z.ZodType<Prisma.PenagihUpdateToOneWithWhereWithoutKomisiInput> = z.object({
+  where: z.lazy(() => PenagihWhereInputSchema).optional(),
+  data: z.union([ z.lazy(() => PenagihUpdateWithoutKomisiInputSchema), z.lazy(() => PenagihUncheckedUpdateWithoutKomisiInputSchema) ]),
+}).strict();
+
+export const PenagihUpdateWithoutKomisiInputSchema: z.ZodType<Prisma.PenagihUpdateWithoutKomisiInput> = z.object({
+  nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  owner: z.lazy(() => UserUpdateOneRequiredWithoutPenagihNestedInputSchema).optional(),
+  akun: z.lazy(() => UserUpdateOneWithoutPenagihAkunNestedInputSchema).optional(),
+  penugasan: z.lazy(() => PenagihPenugasanUpdateManyWithoutPenagihNestedInputSchema).optional(),
+  logDari: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutDariPenagihNestedInputSchema).optional(),
+  logKe: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutKePenagihNestedInputSchema).optional(),
+}).strict();
+
+export const PenagihUncheckedUpdateWithoutKomisiInputSchema: z.ZodType<Prisma.PenagihUncheckedUpdateWithoutKomisiInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  userId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  penugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateManyWithoutPenagihNestedInputSchema).optional(),
+  logDari: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutDariPenagihNestedInputSchema).optional(),
+  logKe: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutKePenagihNestedInputSchema).optional(),
+}).strict();
+
+export const UserUpsertWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.UserUpsertWithoutKomisiPetugasInput> = z.object({
+  update: z.union([ z.lazy(() => UserUpdateWithoutKomisiPetugasInputSchema), z.lazy(() => UserUncheckedUpdateWithoutKomisiPetugasInputSchema) ]),
+  create: z.union([ z.lazy(() => UserCreateWithoutKomisiPetugasInputSchema), z.lazy(() => UserUncheckedCreateWithoutKomisiPetugasInputSchema) ]),
+  where: z.lazy(() => UserWhereInputSchema).optional(),
+}).strict();
+
+export const UserUpdateToOneWithWhereWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.UserUpdateToOneWithWhereWithoutKomisiPetugasInput> = z.object({
+  where: z.lazy(() => UserWhereInputSchema).optional(),
+  data: z.union([ z.lazy(() => UserUpdateWithoutKomisiPetugasInputSchema), z.lazy(() => UserUncheckedUpdateWithoutKomisiPetugasInputSchema) ]),
+}).strict();
+
+export const UserUpdateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.UserUpdateWithoutKomisiPetugasInput> = z.object({
+  nama: z.union([ z.string().min(1, { message: "Required" }),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  user: z.union([ z.string().min(1, { message: "Required" }),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  password: z.union([ z.string().min(3, { message: "Minimal 3 huruf" }),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  identitas: z.union([ z.lazy(() => IdentitasSchema), z.lazy(() => NullableEnumIdentitasFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  file_identitas: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  no_identitas: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  file_npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
+  staffMenuKeys: z.union([ z.lazy(() => NullableJsonNullValueInputSchema), InputJsonValueSchema ]).optional(),
+  staffAllowBankPayment: z.union([ z.boolean(),z.lazy(() => NullableBoolFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  staffAllowIsolir: z.union([ z.boolean(),z.lazy(() => NullableBoolFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  staffAllowCancelPayment: z.union([ z.boolean(),z.lazy(() => NullableBoolFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  staffAllowBerhenti: z.union([ z.boolean(),z.lazy(() => NullableBoolFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  disabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  verified: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  billingStartMode: z.union([ z.lazy(() => BillingStartModeSchema), z.lazy(() => NullableEnumBillingStartModeFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  billingStartDate: z.union([ z.coerce.date(),z.lazy(() => NullableDateTimeFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  revenueBasis: z.union([ z.lazy(() => RevenueBasisSchema), z.lazy(() => EnumRevenueBasisFieldUpdateOperationsInputSchema) ]).optional(),
+  billingGenerateDay: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  freeCustomerLimit: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  pppPackageChangeLimit: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  pppAutoFillEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  portalPelangganEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  portalSlug: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  portalPinHash: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  portalWaCs: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ownedByIsp: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  revenueShareEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  parent: z.lazy(() => UserUpdateOneWithoutChildsNestedInputSchema).optional(),
+  childs: z.lazy(() => UserUpdateManyWithoutParentNestedInputSchema).optional(),
+  routers: z.lazy(() => RouterUpdateManyWithoutUsersNestedInputSchema).optional(),
+  paket: z.lazy(() => PaketUpdateManyWithoutUserNestedInputSchema).optional(),
+  session: z.lazy(() => SessionUpdateManyWithoutUserNestedInputSchema).optional(),
+  client: z.lazy(() => ClientUpdateOneWithoutUserNestedInputSchema).optional(),
+  bank: z.lazy(() => BankUpdateManyWithoutUserNestedInputSchema).optional(),
+  log_bayar: z.lazy(() => LogBayarUpdateManyWithoutUserNestedInputSchema).optional(),
+  pembayaran_mitra: z.lazy(() => PembayaranMitraUpdateManyWithoutUserNestedInputSchema).optional(),
+  pengeluaran: z.lazy(() => PengeluaranUpdateManyWithoutUserNestedInputSchema).optional(),
+  regulatory_settings: z.lazy(() => RegulatorySettingsUpdateOneWithoutUserNestedInputSchema).optional(),
+  regulatory_reports: z.lazy(() => RegulatoryReportUpdateManyWithoutUserNestedInputSchema).optional(),
+  auto_isolir_settings: z.lazy(() => AutoIsolirSettingsUpdateOneWithoutUserNestedInputSchema).optional(),
+  auto_isolir_logs: z.lazy(() => AutoIsolirLogUpdateManyWithoutUserNestedInputSchema).optional(),
+  billing_generate_logs: z.lazy(() => BillingGenerateLogUpdateManyWithoutUserNestedInputSchema).optional(),
+  staffPelangganScopes: z.lazy(() => StaffPelangganScopeUpdateManyWithoutStaffUserNestedInputSchema).optional(),
+  invoiceSettings: z.lazy(() => InvoiceSettingsUpdateOneWithoutUserNestedInputSchema).optional(),
+  portalTiket: z.lazy(() => PortalTiketUpdateManyWithoutUserNestedInputSchema).optional(),
+  portalTiketDiproses: z.lazy(() => PortalTiketUpdateManyWithoutDiprosesOlehNestedInputSchema).optional(),
+  portalBersamaAnggota: z.lazy(() => PortalBersamaMitraUpdateManyWithoutUserNestedInputSchema).optional(),
+  tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
+  penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
+  penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+}).strict();
+
+export const UserUncheckedUpdateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutKomisiPetugasInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  nama: z.union([ z.string().min(1, { message: "Required" }),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  user: z.union([ z.string().min(1, { message: "Required" }),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  password: z.union([ z.string().min(3, { message: "Minimal 3 huruf" }),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  identitas: z.union([ z.lazy(() => IdentitasSchema), z.lazy(() => NullableEnumIdentitasFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  file_identitas: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  no_identitas: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  file_npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  parentId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
+  staffMenuKeys: z.union([ z.lazy(() => NullableJsonNullValueInputSchema), InputJsonValueSchema ]).optional(),
+  staffAllowBankPayment: z.union([ z.boolean(),z.lazy(() => NullableBoolFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  staffAllowIsolir: z.union([ z.boolean(),z.lazy(() => NullableBoolFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  staffAllowCancelPayment: z.union([ z.boolean(),z.lazy(() => NullableBoolFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  staffAllowBerhenti: z.union([ z.boolean(),z.lazy(() => NullableBoolFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  disabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  verified: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  billingStartMode: z.union([ z.lazy(() => BillingStartModeSchema), z.lazy(() => NullableEnumBillingStartModeFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  billingStartDate: z.union([ z.coerce.date(),z.lazy(() => NullableDateTimeFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  revenueBasis: z.union([ z.lazy(() => RevenueBasisSchema), z.lazy(() => EnumRevenueBasisFieldUpdateOperationsInputSchema) ]).optional(),
+  billingGenerateDay: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  freeCustomerLimit: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  pppPackageChangeLimit: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  pppAutoFillEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  portalPelangganEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  portalSlug: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  portalPinHash: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  portalWaCs: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ownedByIsp: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  revenueShareEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  childs: z.lazy(() => UserUncheckedUpdateManyWithoutParentNestedInputSchema).optional(),
+  routers: z.lazy(() => RouterUncheckedUpdateManyWithoutUsersNestedInputSchema).optional(),
+  paket: z.lazy(() => PaketUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
+  session: z.lazy(() => SessionUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
+  client: z.lazy(() => ClientUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
+  bank: z.lazy(() => BankUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
+  log_bayar: z.lazy(() => LogBayarUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
+  pembayaran_mitra: z.lazy(() => PembayaranMitraUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
+  pengeluaran: z.lazy(() => PengeluaranUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
+  regulatory_settings: z.lazy(() => RegulatorySettingsUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
+  regulatory_reports: z.lazy(() => RegulatoryReportUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
+  auto_isolir_settings: z.lazy(() => AutoIsolirSettingsUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
+  auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
+  billing_generate_logs: z.lazy(() => BillingGenerateLogUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
+  staffPelangganScopes: z.lazy(() => StaffPelangganScopeUncheckedUpdateManyWithoutStaffUserNestedInputSchema).optional(),
+  invoiceSettings: z.lazy(() => InvoiceSettingsUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
+  portalTiket: z.lazy(() => PortalTiketUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
+  portalTiketDiproses: z.lazy(() => PortalTiketUncheckedUpdateManyWithoutDiprosesOlehNestedInputSchema).optional(),
+  portalBersamaAnggota: z.lazy(() => PortalBersamaMitraUncheckedUpdateManyWithoutUserNestedInputSchema).optional(),
+  tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
+  penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
+  penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+}).strict();
+
+export const PelangganUpsertWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PelangganUpsertWithoutKomisiPetugasInput> = z.object({
+  update: z.union([ z.lazy(() => PelangganUpdateWithoutKomisiPetugasInputSchema), z.lazy(() => PelangganUncheckedUpdateWithoutKomisiPetugasInputSchema) ]),
+  create: z.union([ z.lazy(() => PelangganCreateWithoutKomisiPetugasInputSchema), z.lazy(() => PelangganUncheckedCreateWithoutKomisiPetugasInputSchema) ]),
+  where: z.lazy(() => PelangganWhereInputSchema).optional(),
+}).strict();
+
+export const PelangganUpdateToOneWithWhereWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PelangganUpdateToOneWithWhereWithoutKomisiPetugasInput> = z.object({
+  where: z.lazy(() => PelangganWhereInputSchema).optional(),
+  data: z.union([ z.lazy(() => PelangganUpdateWithoutKomisiPetugasInputSchema), z.lazy(() => PelangganUncheckedUpdateWithoutKomisiPetugasInputSchema) ]),
+}).strict();
+
+export const PelangganUpdateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PelangganUpdateWithoutKomisiPetugasInput> = z.object({
+  nama: z.union([ z.string().min(1, { message: "Required" }),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  nik: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  alamat: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  nomor: z.union([ z.string().min(1, { message: "Required" }),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  email: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  foto: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  lat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  lng: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  tgl: z.union([ z.string().min(1, { message: "Required" }),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  stop: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  tgl_stop: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  tgl_isolir: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  autoFilledAt: z.union([ z.coerce.date(),z.lazy(() => NullableDateTimeFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  isFreeCustomer: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  noLayanan: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  portalPinHash: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  ppp_secret: z.lazy(() => PppSecretUpdateOneWithoutPelangganNestedInputSchema).optional(),
+  paket: z.lazy(() => PaketUpdateOneRequiredWithoutPelangganNestedInputSchema).optional(),
+  router: z.lazy(() => RouterUpdateOneRequiredWithoutPelangganNestedInputSchema).optional(),
+  pembayaran: z.lazy(() => PembayaranUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  auto_isolir_logs: z.lazy(() => AutoIsolirLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  status_logs: z.lazy(() => PelangganStatusLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  staffPelangganScopes: z.lazy(() => StaffPelangganScopeUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  portalTiket: z.lazy(() => PortalTiketUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  tagihanDihapus: z.lazy(() => TagihanDihapusUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  penagihPenugasan: z.lazy(() => PenagihPenugasanUpdateOneWithoutPelangganNestedInputSchema).optional(),
+  penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+}).strict();
+
+export const PelangganUncheckedUpdateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateWithoutKomisiPetugasInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  routerId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  nama: z.union([ z.string().min(1, { message: "Required" }),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  nik: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  alamat: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  nomor: z.union([ z.string().min(1, { message: "Required" }),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  email: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  foto: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  lat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  lng: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  tgl: z.union([ z.string().min(1, { message: "Required" }),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  stop: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  tgl_stop: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  tgl_isolir: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  autoFilledAt: z.union([ z.coerce.date(),z.lazy(() => NullableDateTimeFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  isFreeCustomer: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  noLayanan: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  portalPinHash: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppp_secretId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  paketId: z.union([ z.number({ invalid_type_error: "Required" }).int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaran: z.lazy(() => PembayaranUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  status_logs: z.lazy(() => PelangganStatusLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  staffPelangganScopes: z.lazy(() => StaffPelangganScopeUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  portalTiket: z.lazy(() => PortalTiketUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateOneWithoutPelangganNestedInputSchema).optional(),
+  penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+}).strict();
+
+export const PembayaranUpsertWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PembayaranUpsertWithoutKomisiPetugasInput> = z.object({
+  update: z.union([ z.lazy(() => PembayaranUpdateWithoutKomisiPetugasInputSchema), z.lazy(() => PembayaranUncheckedUpdateWithoutKomisiPetugasInputSchema) ]),
+  create: z.union([ z.lazy(() => PembayaranCreateWithoutKomisiPetugasInputSchema), z.lazy(() => PembayaranUncheckedCreateWithoutKomisiPetugasInputSchema) ]),
+  where: z.lazy(() => PembayaranWhereInputSchema).optional(),
+}).strict();
+
+export const PembayaranUpdateToOneWithWhereWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PembayaranUpdateToOneWithWhereWithoutKomisiPetugasInput> = z.object({
+  where: z.lazy(() => PembayaranWhereInputSchema).optional(),
+  data: z.union([ z.lazy(() => PembayaranUpdateWithoutKomisiPetugasInputSchema), z.lazy(() => PembayaranUncheckedUpdateWithoutKomisiPetugasInputSchema) ]),
+}).strict();
+
+export const PembayaranUpdateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PembayaranUpdateWithoutKomisiPetugasInput> = z.object({
+  noInvoice: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  inputterId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  jatuh_tempo: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
+  metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  pelanggan: z.lazy(() => PelangganUpdateOneRequiredWithoutPembayaranNestedInputSchema).optional(),
+  paket: z.lazy(() => PaketUpdateOneRequiredWithoutPembayaranNestedInputSchema).optional(),
+  bank: z.lazy(() => BankUpdateOneWithoutPembayaranNestedInputSchema).optional(),
+  log: z.lazy(() => LogBayarUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  tripayTransaksi: z.lazy(() => TripayTransaksiUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  auto_isolir_logs: z.lazy(() => AutoIsolirLogUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+}).strict();
+
+export const PembayaranUncheckedUpdateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.PembayaranUncheckedUpdateWithoutKomisiPetugasInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  noInvoice: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  inputterId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  pelangganId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  paketId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  jatuh_tempo: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
+  total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
+  bankId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  log: z.lazy(() => LogBayarUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+}).strict();
+
+export const LogBayarUpsertWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.LogBayarUpsertWithoutKomisiPetugasInput> = z.object({
+  update: z.union([ z.lazy(() => LogBayarUpdateWithoutKomisiPetugasInputSchema), z.lazy(() => LogBayarUncheckedUpdateWithoutKomisiPetugasInputSchema) ]),
+  create: z.union([ z.lazy(() => LogBayarCreateWithoutKomisiPetugasInputSchema), z.lazy(() => LogBayarUncheckedCreateWithoutKomisiPetugasInputSchema) ]),
+  where: z.lazy(() => LogBayarWhereInputSchema).optional(),
+}).strict();
+
+export const LogBayarUpdateToOneWithWhereWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.LogBayarUpdateToOneWithWhereWithoutKomisiPetugasInput> = z.object({
+  where: z.lazy(() => LogBayarWhereInputSchema).optional(),
+  data: z.union([ z.lazy(() => LogBayarUpdateWithoutKomisiPetugasInputSchema), z.lazy(() => LogBayarUncheckedUpdateWithoutKomisiPetugasInputSchema) ]),
+}).strict();
+
+export const LogBayarUpdateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.LogBayarUpdateWithoutKomisiPetugasInput> = z.object({
+  total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
+  metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaran: z.lazy(() => PembayaranUpdateOneRequiredWithoutLogNestedInputSchema).optional(),
+  user: z.lazy(() => UserUpdateOneRequiredWithoutLog_bayarNestedInputSchema).optional(),
+}).strict();
+
+export const LogBayarUncheckedUpdateWithoutKomisiPetugasInputSchema: z.ZodType<Prisma.LogBayarUncheckedUpdateWithoutKomisiPetugasInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaranId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
+  metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
+  inputterId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpsertWithoutReversedByInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpsertWithoutReversedByInput> = z.object({
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutReversedByInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutReversedByInputSchema) ]),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutReversedByInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutReversedByInputSchema) ]),
+  where: z.lazy(() => KomisiPetugasEntriWhereInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpdateToOneWithWhereWithoutReversedByInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateToOneWithWhereWithoutReversedByInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereInputSchema).optional(),
+  data: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutReversedByInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutReversedByInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriUpdateWithoutReversedByInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateWithoutReversedByInput> = z.object({
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  penagih: z.lazy(() => PenagihUpdateOneRequiredWithoutKomisiNestedInputSchema).optional(),
+  actor: z.lazy(() => UserUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  pelanggan: z.lazy(() => PelangganUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  pembayaran: z.lazy(() => PembayaranUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  logBayar: z.lazy(() => LogBayarUpdateOneWithoutKomisiPetugasNestedInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversedByNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateWithoutReversedByInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateWithoutReversedByInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  penagihId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  actorUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pelangganId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaranId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  logBayarId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  reversesId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpsertWithoutReversesInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpsertWithoutReversesInput> = z.object({
+  update: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutReversesInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutReversesInputSchema) ]),
+  create: z.union([ z.lazy(() => KomisiPetugasEntriCreateWithoutReversesInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedCreateWithoutReversesInputSchema) ]),
+  where: z.lazy(() => KomisiPetugasEntriWhereInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpdateToOneWithWhereWithoutReversesInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateToOneWithWhereWithoutReversesInput> = z.object({
+  where: z.lazy(() => KomisiPetugasEntriWhereInputSchema).optional(),
+  data: z.union([ z.lazy(() => KomisiPetugasEntriUpdateWithoutReversesInputSchema), z.lazy(() => KomisiPetugasEntriUncheckedUpdateWithoutReversesInputSchema) ]),
+}).strict();
+
+export const KomisiPetugasEntriUpdateWithoutReversesInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateWithoutReversesInput> = z.object({
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  penagih: z.lazy(() => PenagihUpdateOneRequiredWithoutKomisiNestedInputSchema).optional(),
+  actor: z.lazy(() => UserUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  pelanggan: z.lazy(() => PelangganUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  pembayaran: z.lazy(() => PembayaranUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  logBayar: z.lazy(() => LogBayarUpdateOneWithoutKomisiPetugasNestedInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversesNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateWithoutReversesInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateWithoutReversesInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  penagihId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  actorUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pelangganId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaranId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  logBayarId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedUpdateOneWithoutReversesNestedInputSchema).optional(),
 }).strict();
 
 export const UserCreateManyParentInputSchema: z.ZodType<Prisma.UserCreateManyParentInput> = z.object({
@@ -31417,6 +33581,7 @@ export const UserCreateManyParentInputSchema: z.ZodType<Prisma.UserCreateManyPar
   npwp: z.string().optional().nullable(),
   omset: z.number().int().optional().nullable(),
   ppn: z.number().optional().nullable(),
+  ppnEnabled: z.boolean().optional(),
   nomor: z.string().optional().nullable(),
   alamat: z.string().optional().nullable(),
   role: z.lazy(() => RoleNameSchema),
@@ -31609,8 +33774,21 @@ export const PenagihCreateManyOwnerInputSchema: z.ZodType<Prisma.PenagihCreateMa
   nama: z.string(),
   nomor: z.string().optional().nullable(),
   aktif: z.boolean().optional(),
+  komisiNominal: z.number().int().optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
+}).strict();
+
+export const KomisiPetugasEntriCreateManyActorInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateManyActorInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  penagihId: z.number().int(),
+  pelangganId: z.number().int(),
+  pembayaranId: z.number().int(),
+  logBayarId: z.number().int().optional().nullable(),
+  reversesId: z.number().int().optional().nullable(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
 }).strict();
 
 export const UserUpdateWithoutParentInputSchema: z.ZodType<Prisma.UserUpdateWithoutParentInput> = z.object({
@@ -31624,6 +33802,7 @@ export const UserUpdateWithoutParentInputSchema: z.ZodType<Prisma.UserUpdateWith
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -31671,6 +33850,7 @@ export const UserUpdateWithoutParentInputSchema: z.ZodType<Prisma.UserUpdateWith
   tripayGateway: z.lazy(() => TripayGatewayUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateWithoutParentInputSchema: z.ZodType<Prisma.UserUncheckedUpdateWithoutParentInput> = z.object({
@@ -31685,6 +33865,7 @@ export const UserUncheckedUpdateWithoutParentInputSchema: z.ZodType<Prisma.UserU
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -31732,6 +33913,7 @@ export const UserUncheckedUpdateWithoutParentInputSchema: z.ZodType<Prisma.UserU
   tripayGateway: z.lazy(() => TripayGatewayUncheckedUpdateOneWithoutUserNestedInputSchema).optional(),
   penagih: z.lazy(() => PenagihUncheckedUpdateManyWithoutOwnerNestedInputSchema).optional(),
   penagihAkun: z.lazy(() => PenagihUncheckedUpdateOneWithoutAkunNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutActorNestedInputSchema).optional(),
 }).strict();
 
 export const UserUncheckedUpdateManyWithoutParentInputSchema: z.ZodType<Prisma.UserUncheckedUpdateManyWithoutParentInput> = z.object({
@@ -31746,6 +33928,7 @@ export const UserUncheckedUpdateManyWithoutParentInputSchema: z.ZodType<Prisma.U
   npwp: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   omset: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   ppn: z.union([ z.number(),z.lazy(() => NullableFloatFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  ppnEnabled: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   alamat: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   role: z.union([ z.lazy(() => RoleNameSchema), z.lazy(() => EnumRoleNameFieldUpdateOperationsInputSchema) ]).optional(),
@@ -31937,6 +34120,7 @@ export const LogBayarUpdateWithoutUserInputSchema: z.ZodType<Prisma.LogBayarUpda
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   pembayaran: z.lazy(() => PembayaranUpdateOneRequiredWithoutLogNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutLogBayarNestedInputSchema).optional(),
 }).strict();
 
 export const LogBayarUncheckedUpdateWithoutUserInputSchema: z.ZodType<Prisma.LogBayarUncheckedUpdateWithoutUserInput> = z.object({
@@ -31946,6 +34130,7 @@ export const LogBayarUncheckedUpdateWithoutUserInputSchema: z.ZodType<Prisma.Log
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateOneWithoutLogBayarNestedInputSchema).optional(),
 }).strict();
 
 export const LogBayarUncheckedUpdateManyWithoutUserInputSchema: z.ZodType<Prisma.LogBayarUncheckedUpdateManyWithoutUserInput> = z.object({
@@ -32265,12 +34450,14 @@ export const PenagihUpdateWithoutOwnerInputSchema: z.ZodType<Prisma.PenagihUpdat
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   akun: z.lazy(() => UserUpdateOneWithoutPenagihAkunNestedInputSchema).optional(),
   penugasan: z.lazy(() => PenagihPenugasanUpdateManyWithoutPenagihNestedInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutDariPenagihNestedInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutKePenagihNestedInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPenagihNestedInputSchema).optional(),
 }).strict();
 
 export const PenagihUncheckedUpdateWithoutOwnerInputSchema: z.ZodType<Prisma.PenagihUncheckedUpdateWithoutOwnerInput> = z.object({
@@ -32279,11 +34466,13 @@ export const PenagihUncheckedUpdateWithoutOwnerInputSchema: z.ZodType<Prisma.Pen
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   penugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateManyWithoutPenagihNestedInputSchema).optional(),
   logDari: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutDariPenagihNestedInputSchema).optional(),
   logKe: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutKePenagihNestedInputSchema).optional(),
+  komisi: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPenagihNestedInputSchema).optional(),
 }).strict();
 
 export const PenagihUncheckedUpdateManyWithoutOwnerInputSchema: z.ZodType<Prisma.PenagihUncheckedUpdateManyWithoutOwnerInput> = z.object({
@@ -32292,8 +34481,46 @@ export const PenagihUncheckedUpdateManyWithoutOwnerInputSchema: z.ZodType<Prisma
   nama: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   nomor: z.union([ z.string(),z.lazy(() => NullableStringFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   aktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiNominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpdateWithoutActorInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateWithoutActorInput> = z.object({
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  penagih: z.lazy(() => PenagihUpdateOneRequiredWithoutKomisiNestedInputSchema).optional(),
+  pelanggan: z.lazy(() => PelangganUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  pembayaran: z.lazy(() => PembayaranUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  logBayar: z.lazy(() => LogBayarUpdateOneWithoutKomisiPetugasNestedInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversedByNestedInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversesNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateWithoutActorInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateWithoutActorInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  penagihId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pelangganId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaranId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  logBayarId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  reversesId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedUpdateOneWithoutReversesNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateManyWithoutActorInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateManyWithoutActorInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  penagihId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pelangganId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaranId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  logBayarId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  reversesId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
 }).strict();
 
 export const PortalBersamaMitraCreateManyPortalInputSchema: z.ZodType<Prisma.PortalBersamaMitraCreateManyPortalInput> = z.object({
@@ -32547,6 +34774,7 @@ export const PelangganUpdateWithoutRouterInputSchema: z.ZodType<Prisma.Pelanggan
   tagihanDihapus: z.lazy(() => TagihanDihapusUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateWithoutRouterInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateWithoutRouterInput> = z.object({
@@ -32579,6 +34807,7 @@ export const PelangganUncheckedUpdateWithoutRouterInputSchema: z.ZodType<Prisma.
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateManyWithoutRouterInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateManyWithoutRouterInput> = z.object({
@@ -32812,6 +35041,7 @@ export const PembayaranCreateManyPelangganInputSchema: z.ZodType<Prisma.Pembayar
   bankId: z.number().int().optional().nullable(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
@@ -32880,6 +35110,18 @@ export const PenagihPenugasanLogCreateManyPelangganInputSchema: z.ZodType<Prisma
   created: z.coerce.date().optional(),
 }).strict();
 
+export const KomisiPetugasEntriCreateManyPelangganInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateManyPelangganInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  penagihId: z.number().int(),
+  actorUserId: z.number().int(),
+  pembayaranId: z.number().int(),
+  logBayarId: z.number().int().optional().nullable(),
+  reversesId: z.number().int().optional().nullable(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+}).strict();
+
 export const PembayaranUpdateWithoutPelangganInputSchema: z.ZodType<Prisma.PembayaranUpdateWithoutPelangganInput> = z.object({
   noInvoice: z.union([ z.string(),z.lazy(() => StringFieldUpdateOperationsInputSchema) ]).optional(),
   inputterId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
@@ -32887,12 +35129,14 @@ export const PembayaranUpdateWithoutPelangganInputSchema: z.ZodType<Prisma.Pemba
   total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   paket: z.lazy(() => PaketUpdateOneRequiredWithoutPembayaranNestedInputSchema).optional(),
   bank: z.lazy(() => BankUpdateOneWithoutPembayaranNestedInputSchema).optional(),
   log: z.lazy(() => LogBayarUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
@@ -32907,10 +35151,12 @@ export const PembayaranUncheckedUpdateWithoutPelangganInputSchema: z.ZodType<Pri
   bankId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   log: z.lazy(() => LogBayarUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
@@ -32925,6 +35171,7 @@ export const PembayaranUncheckedUpdateManyWithoutPelangganInputSchema: z.ZodType
   bankId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
@@ -33114,6 +35361,43 @@ export const PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganInputSchema: 
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
 }).strict();
 
+export const KomisiPetugasEntriUpdateWithoutPelangganInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateWithoutPelangganInput> = z.object({
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  penagih: z.lazy(() => PenagihUpdateOneRequiredWithoutKomisiNestedInputSchema).optional(),
+  actor: z.lazy(() => UserUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  pembayaran: z.lazy(() => PembayaranUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  logBayar: z.lazy(() => LogBayarUpdateOneWithoutKomisiPetugasNestedInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversedByNestedInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversesNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateWithoutPelangganInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateWithoutPelangganInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  penagihId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  actorUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaranId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  logBayarId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  reversesId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedUpdateOneWithoutReversesNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  penagihId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  actorUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaranId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  logBayarId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  reversesId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+}).strict();
+
 export const PppPackageChangeCreateManyPppSecretInputSchema: z.ZodType<Prisma.PppPackageChangeCreateManyPppSecretInput> = z.object({
   id: z.number().int().optional(),
   pelangganId: z.number().int(),
@@ -33238,6 +35522,7 @@ export const PembayaranCreateManyPaketInputSchema: z.ZodType<Prisma.PembayaranCr
   bankId: z.number().int().optional().nullable(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
@@ -33276,6 +35561,7 @@ export const PelangganUpdateWithoutPaketInputSchema: z.ZodType<Prisma.PelangganU
   tagihanDihapus: z.lazy(() => TagihanDihapusUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateWithoutPaketInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateWithoutPaketInput> = z.object({
@@ -33308,6 +35594,7 @@ export const PelangganUncheckedUpdateWithoutPaketInputSchema: z.ZodType<Prisma.P
   tagihanDihapus: z.lazy(() => TagihanDihapusUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasan: z.lazy(() => PenagihPenugasanUncheckedUpdateOneWithoutPelangganNestedInputSchema).optional(),
   penagihPenugasanLog: z.lazy(() => PenagihPenugasanLogUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPelangganNestedInputSchema).optional(),
 }).strict();
 
 export const PelangganUncheckedUpdateManyWithoutPaketInputSchema: z.ZodType<Prisma.PelangganUncheckedUpdateManyWithoutPaketInput> = z.object({
@@ -33341,12 +35628,14 @@ export const PembayaranUpdateWithoutPaketInputSchema: z.ZodType<Prisma.Pembayara
   total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   pelanggan: z.lazy(() => PelangganUpdateOneRequiredWithoutPembayaranNestedInputSchema).optional(),
   bank: z.lazy(() => BankUpdateOneWithoutPembayaranNestedInputSchema).optional(),
   log: z.lazy(() => LogBayarUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
@@ -33361,10 +35650,12 @@ export const PembayaranUncheckedUpdateWithoutPaketInputSchema: z.ZodType<Prisma.
   bankId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   log: z.lazy(() => LogBayarUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
@@ -33379,6 +35670,7 @@ export const PembayaranUncheckedUpdateManyWithoutPaketInputSchema: z.ZodType<Pri
   bankId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
@@ -33406,6 +35698,7 @@ export const PembayaranCreateManyBankInputSchema: z.ZodType<Prisma.PembayaranCre
   total: z.number(),
   metode: z.lazy(() => MetodeBayarSchema).optional().nullable(),
   nonaktif: z.boolean().optional(),
+  bayarSekaligus: z.number().int().optional().nullable(),
   status: z.lazy(() => StatusBayarSchema).optional(),
   created: z.coerce.date().optional(),
   updated: z.coerce.date().optional(),
@@ -33430,12 +35723,14 @@ export const PembayaranUpdateWithoutBankInputSchema: z.ZodType<Prisma.Pembayaran
   total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   pelanggan: z.lazy(() => PelangganUpdateOneRequiredWithoutPembayaranNestedInputSchema).optional(),
   paket: z.lazy(() => PaketUpdateOneRequiredWithoutPembayaranNestedInputSchema).optional(),
   log: z.lazy(() => LogBayarUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
@@ -33450,10 +35745,12 @@ export const PembayaranUncheckedUpdateWithoutBankInputSchema: z.ZodType<Prisma.P
   total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   log: z.lazy(() => LogBayarUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   tripayTransaksi: z.lazy(() => TripayTransaksiUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
   auto_isolir_logs: z.lazy(() => AutoIsolirLogUncheckedUpdateManyWithoutPembayaranNestedInputSchema).optional(),
 }).strict();
@@ -33468,6 +35765,7 @@ export const PembayaranUncheckedUpdateManyWithoutBankInputSchema: z.ZodType<Pris
   total: z.union([ z.number(),z.lazy(() => FloatFieldUpdateOperationsInputSchema) ]).optional(),
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   nonaktif: z.union([ z.boolean(),z.lazy(() => BoolFieldUpdateOperationsInputSchema) ]).optional(),
+  bayarSekaligus: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
@@ -33519,6 +35817,18 @@ export const LogBayarCreateManyPembayaranInputSchema: z.ZodType<Prisma.LogBayarC
   created: z.coerce.date().optional(),
 }).strict();
 
+export const KomisiPetugasEntriCreateManyPembayaranInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateManyPembayaranInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  penagihId: z.number().int(),
+  actorUserId: z.number().int(),
+  pelangganId: z.number().int(),
+  logBayarId: z.number().int().optional().nullable(),
+  reversesId: z.number().int().optional().nullable(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+}).strict();
+
 export const TripayTransaksiCreateManyPembayaranInputSchema: z.ZodType<Prisma.TripayTransaksiCreateManyPembayaranInput> = z.object({
   id: z.number().int().optional(),
   merchantRef: z.string(),
@@ -33554,6 +35864,7 @@ export const LogBayarUpdateWithoutPembayaranInputSchema: z.ZodType<Prisma.LogBay
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
   user: z.lazy(() => UserUpdateOneRequiredWithoutLog_bayarNestedInputSchema).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutLogBayarNestedInputSchema).optional(),
 }).strict();
 
 export const LogBayarUncheckedUpdateWithoutPembayaranInputSchema: z.ZodType<Prisma.LogBayarUncheckedUpdateWithoutPembayaranInput> = z.object({
@@ -33563,6 +35874,7 @@ export const LogBayarUncheckedUpdateWithoutPembayaranInputSchema: z.ZodType<Pris
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   inputterId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  komisiPetugas: z.lazy(() => KomisiPetugasEntriUncheckedUpdateOneWithoutLogBayarNestedInputSchema).optional(),
 }).strict();
 
 export const LogBayarUncheckedUpdateManyWithoutPembayaranInputSchema: z.ZodType<Prisma.LogBayarUncheckedUpdateManyWithoutPembayaranInput> = z.object({
@@ -33571,6 +35883,43 @@ export const LogBayarUncheckedUpdateManyWithoutPembayaranInputSchema: z.ZodType<
   metode: z.union([ z.lazy(() => MetodeBayarSchema), z.lazy(() => NullableEnumMetodeBayarFieldUpdateOperationsInputSchema) ]).optional().nullable(),
   status: z.union([ z.lazy(() => StatusBayarSchema), z.lazy(() => EnumStatusBayarFieldUpdateOperationsInputSchema) ]).optional(),
   inputterId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUpdateWithoutPembayaranInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateWithoutPembayaranInput> = z.object({
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  penagih: z.lazy(() => PenagihUpdateOneRequiredWithoutKomisiNestedInputSchema).optional(),
+  actor: z.lazy(() => UserUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  pelanggan: z.lazy(() => PelangganUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  logBayar: z.lazy(() => LogBayarUpdateOneWithoutKomisiPetugasNestedInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversedByNestedInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversesNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateWithoutPembayaranInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateWithoutPembayaranInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  penagihId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  actorUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pelangganId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  logBayarId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  reversesId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedUpdateOneWithoutReversesNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateManyWithoutPembayaranInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateManyWithoutPembayaranInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  penagihId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  actorUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pelangganId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  logBayarId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  reversesId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
 }).strict();
 
@@ -33758,6 +36107,18 @@ export const PenagihPenugasanLogCreateManyKePenagihInputSchema: z.ZodType<Prisma
   created: z.coerce.date().optional(),
 }).strict();
 
+export const KomisiPetugasEntriCreateManyPenagihInputSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateManyPenagihInput> = z.object({
+  id: z.number().int().optional(),
+  ownerUserId: z.number().int(),
+  actorUserId: z.number().int(),
+  pelangganId: z.number().int(),
+  pembayaranId: z.number().int(),
+  logBayarId: z.number().int().optional().nullable(),
+  reversesId: z.number().int().optional().nullable(),
+  nominal: z.number().int(),
+  created: z.coerce.date().optional(),
+}).strict();
+
 export const PenagihPenugasanUpdateWithoutPenagihInputSchema: z.ZodType<Prisma.PenagihPenugasanUpdateWithoutPenagihInput> = z.object({
   ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
   updated: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
@@ -33840,6 +36201,43 @@ export const PenagihPenugasanLogUncheckedUpdateManyWithoutKePenagihInputSchema: 
   created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
 }).strict();
 
+export const KomisiPetugasEntriUpdateWithoutPenagihInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateWithoutPenagihInput> = z.object({
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  actor: z.lazy(() => UserUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  pelanggan: z.lazy(() => PelangganUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  pembayaran: z.lazy(() => PembayaranUpdateOneRequiredWithoutKomisiPetugasNestedInputSchema).optional(),
+  logBayar: z.lazy(() => LogBayarUpdateOneWithoutKomisiPetugasNestedInputSchema).optional(),
+  reverses: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversedByNestedInputSchema).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUpdateOneWithoutReversesNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateWithoutPenagihInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateWithoutPenagihInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  actorUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pelangganId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaranId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  logBayarId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  reversesId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+  reversedBy: z.lazy(() => KomisiPetugasEntriUncheckedUpdateOneWithoutReversesNestedInputSchema).optional(),
+}).strict();
+
+export const KomisiPetugasEntriUncheckedUpdateManyWithoutPenagihInputSchema: z.ZodType<Prisma.KomisiPetugasEntriUncheckedUpdateManyWithoutPenagihInput> = z.object({
+  id: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  ownerUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  actorUserId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pelangganId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  pembayaranId: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  logBayarId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  reversesId: z.union([ z.number().int(),z.lazy(() => NullableIntFieldUpdateOperationsInputSchema) ]).optional().nullable(),
+  nominal: z.union([ z.number().int(),z.lazy(() => IntFieldUpdateOperationsInputSchema) ]).optional(),
+  created: z.union([ z.coerce.date(),z.lazy(() => DateTimeFieldUpdateOperationsInputSchema) ]).optional(),
+}).strict();
+
 /////////////////////////////////////////
 // ARGS
 /////////////////////////////////////////
@@ -33847,9 +36245,9 @@ export const PenagihPenugasanLogUncheckedUpdateManyWithoutKePenagihInputSchema: 
 export const UserFindFirstArgsSchema: z.ZodType<Prisma.UserFindFirstArgs> = z.object({
   select: UserSelectSchema.optional(),
   include: UserIncludeSchema.optional(),
-  where: UserWhereInputSchema.optional(),
+  where: UserWhereInputSchema.optional(), 
   orderBy: z.union([ UserOrderByWithRelationInputSchema.array(), UserOrderByWithRelationInputSchema ]).optional(),
-  cursor: UserWhereUniqueInputSchema.optional(),
+  cursor: UserWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ UserScalarFieldEnumSchema, UserScalarFieldEnumSchema.array() ]).optional(),
@@ -33858,9 +36256,9 @@ export const UserFindFirstArgsSchema: z.ZodType<Prisma.UserFindFirstArgs> = z.ob
 export const UserFindFirstOrThrowArgsSchema: z.ZodType<Prisma.UserFindFirstOrThrowArgs> = z.object({
   select: UserSelectSchema.optional(),
   include: UserIncludeSchema.optional(),
-  where: UserWhereInputSchema.optional(),
+  where: UserWhereInputSchema.optional(), 
   orderBy: z.union([ UserOrderByWithRelationInputSchema.array(), UserOrderByWithRelationInputSchema ]).optional(),
-  cursor: UserWhereUniqueInputSchema.optional(),
+  cursor: UserWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ UserScalarFieldEnumSchema, UserScalarFieldEnumSchema.array() ]).optional(),
@@ -33869,27 +36267,27 @@ export const UserFindFirstOrThrowArgsSchema: z.ZodType<Prisma.UserFindFirstOrThr
 export const UserFindManyArgsSchema: z.ZodType<Prisma.UserFindManyArgs> = z.object({
   select: UserSelectSchema.optional(),
   include: UserIncludeSchema.optional(),
-  where: UserWhereInputSchema.optional(),
+  where: UserWhereInputSchema.optional(), 
   orderBy: z.union([ UserOrderByWithRelationInputSchema.array(), UserOrderByWithRelationInputSchema ]).optional(),
-  cursor: UserWhereUniqueInputSchema.optional(),
+  cursor: UserWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ UserScalarFieldEnumSchema, UserScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const UserAggregateArgsSchema: z.ZodType<Prisma.UserAggregateArgs> = z.object({
-  where: UserWhereInputSchema.optional(),
+  where: UserWhereInputSchema.optional(), 
   orderBy: z.union([ UserOrderByWithRelationInputSchema.array(), UserOrderByWithRelationInputSchema ]).optional(),
-  cursor: UserWhereUniqueInputSchema.optional(),
+  cursor: UserWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const UserGroupByArgsSchema: z.ZodType<Prisma.UserGroupByArgs> = z.object({
-  where: UserWhereInputSchema.optional(),
+  where: UserWhereInputSchema.optional(), 
   orderBy: z.union([ UserOrderByWithAggregationInputSchema.array(), UserOrderByWithAggregationInputSchema ]).optional(),
-  by: UserScalarFieldEnumSchema.array(),
-  having: UserScalarWhereWithAggregatesInputSchema.optional(),
+  by: UserScalarFieldEnumSchema.array(), 
+  having: UserScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -33897,21 +36295,21 @@ export const UserGroupByArgsSchema: z.ZodType<Prisma.UserGroupByArgs> = z.object
 export const UserFindUniqueArgsSchema: z.ZodType<Prisma.UserFindUniqueArgs> = z.object({
   select: UserSelectSchema.optional(),
   include: UserIncludeSchema.optional(),
-  where: UserWhereUniqueInputSchema,
+  where: UserWhereUniqueInputSchema, 
 }).strict();
 
 export const UserFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.UserFindUniqueOrThrowArgs> = z.object({
   select: UserSelectSchema.optional(),
   include: UserIncludeSchema.optional(),
-  where: UserWhereUniqueInputSchema,
+  where: UserWhereUniqueInputSchema, 
 }).strict();
 
 export const PortalBersamaFindFirstArgsSchema: z.ZodType<Prisma.PortalBersamaFindFirstArgs> = z.object({
   select: PortalBersamaSelectSchema.optional(),
   include: PortalBersamaIncludeSchema.optional(),
-  where: PortalBersamaWhereInputSchema.optional(),
+  where: PortalBersamaWhereInputSchema.optional(), 
   orderBy: z.union([ PortalBersamaOrderByWithRelationInputSchema.array(), PortalBersamaOrderByWithRelationInputSchema ]).optional(),
-  cursor: PortalBersamaWhereUniqueInputSchema.optional(),
+  cursor: PortalBersamaWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PortalBersamaScalarFieldEnumSchema, PortalBersamaScalarFieldEnumSchema.array() ]).optional(),
@@ -33920,9 +36318,9 @@ export const PortalBersamaFindFirstArgsSchema: z.ZodType<Prisma.PortalBersamaFin
 export const PortalBersamaFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PortalBersamaFindFirstOrThrowArgs> = z.object({
   select: PortalBersamaSelectSchema.optional(),
   include: PortalBersamaIncludeSchema.optional(),
-  where: PortalBersamaWhereInputSchema.optional(),
+  where: PortalBersamaWhereInputSchema.optional(), 
   orderBy: z.union([ PortalBersamaOrderByWithRelationInputSchema.array(), PortalBersamaOrderByWithRelationInputSchema ]).optional(),
-  cursor: PortalBersamaWhereUniqueInputSchema.optional(),
+  cursor: PortalBersamaWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PortalBersamaScalarFieldEnumSchema, PortalBersamaScalarFieldEnumSchema.array() ]).optional(),
@@ -33931,27 +36329,27 @@ export const PortalBersamaFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PortalBer
 export const PortalBersamaFindManyArgsSchema: z.ZodType<Prisma.PortalBersamaFindManyArgs> = z.object({
   select: PortalBersamaSelectSchema.optional(),
   include: PortalBersamaIncludeSchema.optional(),
-  where: PortalBersamaWhereInputSchema.optional(),
+  where: PortalBersamaWhereInputSchema.optional(), 
   orderBy: z.union([ PortalBersamaOrderByWithRelationInputSchema.array(), PortalBersamaOrderByWithRelationInputSchema ]).optional(),
-  cursor: PortalBersamaWhereUniqueInputSchema.optional(),
+  cursor: PortalBersamaWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PortalBersamaScalarFieldEnumSchema, PortalBersamaScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PortalBersamaAggregateArgsSchema: z.ZodType<Prisma.PortalBersamaAggregateArgs> = z.object({
-  where: PortalBersamaWhereInputSchema.optional(),
+  where: PortalBersamaWhereInputSchema.optional(), 
   orderBy: z.union([ PortalBersamaOrderByWithRelationInputSchema.array(), PortalBersamaOrderByWithRelationInputSchema ]).optional(),
-  cursor: PortalBersamaWhereUniqueInputSchema.optional(),
+  cursor: PortalBersamaWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PortalBersamaGroupByArgsSchema: z.ZodType<Prisma.PortalBersamaGroupByArgs> = z.object({
-  where: PortalBersamaWhereInputSchema.optional(),
+  where: PortalBersamaWhereInputSchema.optional(), 
   orderBy: z.union([ PortalBersamaOrderByWithAggregationInputSchema.array(), PortalBersamaOrderByWithAggregationInputSchema ]).optional(),
-  by: PortalBersamaScalarFieldEnumSchema.array(),
-  having: PortalBersamaScalarWhereWithAggregatesInputSchema.optional(),
+  by: PortalBersamaScalarFieldEnumSchema.array(), 
+  having: PortalBersamaScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -33959,21 +36357,21 @@ export const PortalBersamaGroupByArgsSchema: z.ZodType<Prisma.PortalBersamaGroup
 export const PortalBersamaFindUniqueArgsSchema: z.ZodType<Prisma.PortalBersamaFindUniqueArgs> = z.object({
   select: PortalBersamaSelectSchema.optional(),
   include: PortalBersamaIncludeSchema.optional(),
-  where: PortalBersamaWhereUniqueInputSchema,
+  where: PortalBersamaWhereUniqueInputSchema, 
 }).strict();
 
 export const PortalBersamaFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PortalBersamaFindUniqueOrThrowArgs> = z.object({
   select: PortalBersamaSelectSchema.optional(),
   include: PortalBersamaIncludeSchema.optional(),
-  where: PortalBersamaWhereUniqueInputSchema,
+  where: PortalBersamaWhereUniqueInputSchema, 
 }).strict();
 
 export const PortalBersamaMitraFindFirstArgsSchema: z.ZodType<Prisma.PortalBersamaMitraFindFirstArgs> = z.object({
   select: PortalBersamaMitraSelectSchema.optional(),
   include: PortalBersamaMitraIncludeSchema.optional(),
-  where: PortalBersamaMitraWhereInputSchema.optional(),
+  where: PortalBersamaMitraWhereInputSchema.optional(), 
   orderBy: z.union([ PortalBersamaMitraOrderByWithRelationInputSchema.array(), PortalBersamaMitraOrderByWithRelationInputSchema ]).optional(),
-  cursor: PortalBersamaMitraWhereUniqueInputSchema.optional(),
+  cursor: PortalBersamaMitraWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PortalBersamaMitraScalarFieldEnumSchema, PortalBersamaMitraScalarFieldEnumSchema.array() ]).optional(),
@@ -33982,9 +36380,9 @@ export const PortalBersamaMitraFindFirstArgsSchema: z.ZodType<Prisma.PortalBersa
 export const PortalBersamaMitraFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PortalBersamaMitraFindFirstOrThrowArgs> = z.object({
   select: PortalBersamaMitraSelectSchema.optional(),
   include: PortalBersamaMitraIncludeSchema.optional(),
-  where: PortalBersamaMitraWhereInputSchema.optional(),
+  where: PortalBersamaMitraWhereInputSchema.optional(), 
   orderBy: z.union([ PortalBersamaMitraOrderByWithRelationInputSchema.array(), PortalBersamaMitraOrderByWithRelationInputSchema ]).optional(),
-  cursor: PortalBersamaMitraWhereUniqueInputSchema.optional(),
+  cursor: PortalBersamaMitraWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PortalBersamaMitraScalarFieldEnumSchema, PortalBersamaMitraScalarFieldEnumSchema.array() ]).optional(),
@@ -33993,27 +36391,27 @@ export const PortalBersamaMitraFindFirstOrThrowArgsSchema: z.ZodType<Prisma.Port
 export const PortalBersamaMitraFindManyArgsSchema: z.ZodType<Prisma.PortalBersamaMitraFindManyArgs> = z.object({
   select: PortalBersamaMitraSelectSchema.optional(),
   include: PortalBersamaMitraIncludeSchema.optional(),
-  where: PortalBersamaMitraWhereInputSchema.optional(),
+  where: PortalBersamaMitraWhereInputSchema.optional(), 
   orderBy: z.union([ PortalBersamaMitraOrderByWithRelationInputSchema.array(), PortalBersamaMitraOrderByWithRelationInputSchema ]).optional(),
-  cursor: PortalBersamaMitraWhereUniqueInputSchema.optional(),
+  cursor: PortalBersamaMitraWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PortalBersamaMitraScalarFieldEnumSchema, PortalBersamaMitraScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PortalBersamaMitraAggregateArgsSchema: z.ZodType<Prisma.PortalBersamaMitraAggregateArgs> = z.object({
-  where: PortalBersamaMitraWhereInputSchema.optional(),
+  where: PortalBersamaMitraWhereInputSchema.optional(), 
   orderBy: z.union([ PortalBersamaMitraOrderByWithRelationInputSchema.array(), PortalBersamaMitraOrderByWithRelationInputSchema ]).optional(),
-  cursor: PortalBersamaMitraWhereUniqueInputSchema.optional(),
+  cursor: PortalBersamaMitraWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PortalBersamaMitraGroupByArgsSchema: z.ZodType<Prisma.PortalBersamaMitraGroupByArgs> = z.object({
-  where: PortalBersamaMitraWhereInputSchema.optional(),
+  where: PortalBersamaMitraWhereInputSchema.optional(), 
   orderBy: z.union([ PortalBersamaMitraOrderByWithAggregationInputSchema.array(), PortalBersamaMitraOrderByWithAggregationInputSchema ]).optional(),
-  by: PortalBersamaMitraScalarFieldEnumSchema.array(),
-  having: PortalBersamaMitraScalarWhereWithAggregatesInputSchema.optional(),
+  by: PortalBersamaMitraScalarFieldEnumSchema.array(), 
+  having: PortalBersamaMitraScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34021,21 +36419,21 @@ export const PortalBersamaMitraGroupByArgsSchema: z.ZodType<Prisma.PortalBersama
 export const PortalBersamaMitraFindUniqueArgsSchema: z.ZodType<Prisma.PortalBersamaMitraFindUniqueArgs> = z.object({
   select: PortalBersamaMitraSelectSchema.optional(),
   include: PortalBersamaMitraIncludeSchema.optional(),
-  where: PortalBersamaMitraWhereUniqueInputSchema,
+  where: PortalBersamaMitraWhereUniqueInputSchema, 
 }).strict();
 
 export const PortalBersamaMitraFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PortalBersamaMitraFindUniqueOrThrowArgs> = z.object({
   select: PortalBersamaMitraSelectSchema.optional(),
   include: PortalBersamaMitraIncludeSchema.optional(),
-  where: PortalBersamaMitraWhereUniqueInputSchema,
+  where: PortalBersamaMitraWhereUniqueInputSchema, 
 }).strict();
 
 export const TripayGatewayFindFirstArgsSchema: z.ZodType<Prisma.TripayGatewayFindFirstArgs> = z.object({
   select: TripayGatewaySelectSchema.optional(),
   include: TripayGatewayIncludeSchema.optional(),
-  where: TripayGatewayWhereInputSchema.optional(),
+  where: TripayGatewayWhereInputSchema.optional(), 
   orderBy: z.union([ TripayGatewayOrderByWithRelationInputSchema.array(), TripayGatewayOrderByWithRelationInputSchema ]).optional(),
-  cursor: TripayGatewayWhereUniqueInputSchema.optional(),
+  cursor: TripayGatewayWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ TripayGatewayScalarFieldEnumSchema, TripayGatewayScalarFieldEnumSchema.array() ]).optional(),
@@ -34044,9 +36442,9 @@ export const TripayGatewayFindFirstArgsSchema: z.ZodType<Prisma.TripayGatewayFin
 export const TripayGatewayFindFirstOrThrowArgsSchema: z.ZodType<Prisma.TripayGatewayFindFirstOrThrowArgs> = z.object({
   select: TripayGatewaySelectSchema.optional(),
   include: TripayGatewayIncludeSchema.optional(),
-  where: TripayGatewayWhereInputSchema.optional(),
+  where: TripayGatewayWhereInputSchema.optional(), 
   orderBy: z.union([ TripayGatewayOrderByWithRelationInputSchema.array(), TripayGatewayOrderByWithRelationInputSchema ]).optional(),
-  cursor: TripayGatewayWhereUniqueInputSchema.optional(),
+  cursor: TripayGatewayWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ TripayGatewayScalarFieldEnumSchema, TripayGatewayScalarFieldEnumSchema.array() ]).optional(),
@@ -34055,27 +36453,27 @@ export const TripayGatewayFindFirstOrThrowArgsSchema: z.ZodType<Prisma.TripayGat
 export const TripayGatewayFindManyArgsSchema: z.ZodType<Prisma.TripayGatewayFindManyArgs> = z.object({
   select: TripayGatewaySelectSchema.optional(),
   include: TripayGatewayIncludeSchema.optional(),
-  where: TripayGatewayWhereInputSchema.optional(),
+  where: TripayGatewayWhereInputSchema.optional(), 
   orderBy: z.union([ TripayGatewayOrderByWithRelationInputSchema.array(), TripayGatewayOrderByWithRelationInputSchema ]).optional(),
-  cursor: TripayGatewayWhereUniqueInputSchema.optional(),
+  cursor: TripayGatewayWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ TripayGatewayScalarFieldEnumSchema, TripayGatewayScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const TripayGatewayAggregateArgsSchema: z.ZodType<Prisma.TripayGatewayAggregateArgs> = z.object({
-  where: TripayGatewayWhereInputSchema.optional(),
+  where: TripayGatewayWhereInputSchema.optional(), 
   orderBy: z.union([ TripayGatewayOrderByWithRelationInputSchema.array(), TripayGatewayOrderByWithRelationInputSchema ]).optional(),
-  cursor: TripayGatewayWhereUniqueInputSchema.optional(),
+  cursor: TripayGatewayWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const TripayGatewayGroupByArgsSchema: z.ZodType<Prisma.TripayGatewayGroupByArgs> = z.object({
-  where: TripayGatewayWhereInputSchema.optional(),
+  where: TripayGatewayWhereInputSchema.optional(), 
   orderBy: z.union([ TripayGatewayOrderByWithAggregationInputSchema.array(), TripayGatewayOrderByWithAggregationInputSchema ]).optional(),
-  by: TripayGatewayScalarFieldEnumSchema.array(),
-  having: TripayGatewayScalarWhereWithAggregatesInputSchema.optional(),
+  by: TripayGatewayScalarFieldEnumSchema.array(), 
+  having: TripayGatewayScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34083,21 +36481,21 @@ export const TripayGatewayGroupByArgsSchema: z.ZodType<Prisma.TripayGatewayGroup
 export const TripayGatewayFindUniqueArgsSchema: z.ZodType<Prisma.TripayGatewayFindUniqueArgs> = z.object({
   select: TripayGatewaySelectSchema.optional(),
   include: TripayGatewayIncludeSchema.optional(),
-  where: TripayGatewayWhereUniqueInputSchema,
+  where: TripayGatewayWhereUniqueInputSchema, 
 }).strict();
 
 export const TripayGatewayFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.TripayGatewayFindUniqueOrThrowArgs> = z.object({
   select: TripayGatewaySelectSchema.optional(),
   include: TripayGatewayIncludeSchema.optional(),
-  where: TripayGatewayWhereUniqueInputSchema,
+  where: TripayGatewayWhereUniqueInputSchema, 
 }).strict();
 
 export const TripayTransaksiFindFirstArgsSchema: z.ZodType<Prisma.TripayTransaksiFindFirstArgs> = z.object({
   select: TripayTransaksiSelectSchema.optional(),
   include: TripayTransaksiIncludeSchema.optional(),
-  where: TripayTransaksiWhereInputSchema.optional(),
+  where: TripayTransaksiWhereInputSchema.optional(), 
   orderBy: z.union([ TripayTransaksiOrderByWithRelationInputSchema.array(), TripayTransaksiOrderByWithRelationInputSchema ]).optional(),
-  cursor: TripayTransaksiWhereUniqueInputSchema.optional(),
+  cursor: TripayTransaksiWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ TripayTransaksiScalarFieldEnumSchema, TripayTransaksiScalarFieldEnumSchema.array() ]).optional(),
@@ -34106,9 +36504,9 @@ export const TripayTransaksiFindFirstArgsSchema: z.ZodType<Prisma.TripayTransaks
 export const TripayTransaksiFindFirstOrThrowArgsSchema: z.ZodType<Prisma.TripayTransaksiFindFirstOrThrowArgs> = z.object({
   select: TripayTransaksiSelectSchema.optional(),
   include: TripayTransaksiIncludeSchema.optional(),
-  where: TripayTransaksiWhereInputSchema.optional(),
+  where: TripayTransaksiWhereInputSchema.optional(), 
   orderBy: z.union([ TripayTransaksiOrderByWithRelationInputSchema.array(), TripayTransaksiOrderByWithRelationInputSchema ]).optional(),
-  cursor: TripayTransaksiWhereUniqueInputSchema.optional(),
+  cursor: TripayTransaksiWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ TripayTransaksiScalarFieldEnumSchema, TripayTransaksiScalarFieldEnumSchema.array() ]).optional(),
@@ -34117,27 +36515,27 @@ export const TripayTransaksiFindFirstOrThrowArgsSchema: z.ZodType<Prisma.TripayT
 export const TripayTransaksiFindManyArgsSchema: z.ZodType<Prisma.TripayTransaksiFindManyArgs> = z.object({
   select: TripayTransaksiSelectSchema.optional(),
   include: TripayTransaksiIncludeSchema.optional(),
-  where: TripayTransaksiWhereInputSchema.optional(),
+  where: TripayTransaksiWhereInputSchema.optional(), 
   orderBy: z.union([ TripayTransaksiOrderByWithRelationInputSchema.array(), TripayTransaksiOrderByWithRelationInputSchema ]).optional(),
-  cursor: TripayTransaksiWhereUniqueInputSchema.optional(),
+  cursor: TripayTransaksiWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ TripayTransaksiScalarFieldEnumSchema, TripayTransaksiScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const TripayTransaksiAggregateArgsSchema: z.ZodType<Prisma.TripayTransaksiAggregateArgs> = z.object({
-  where: TripayTransaksiWhereInputSchema.optional(),
+  where: TripayTransaksiWhereInputSchema.optional(), 
   orderBy: z.union([ TripayTransaksiOrderByWithRelationInputSchema.array(), TripayTransaksiOrderByWithRelationInputSchema ]).optional(),
-  cursor: TripayTransaksiWhereUniqueInputSchema.optional(),
+  cursor: TripayTransaksiWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const TripayTransaksiGroupByArgsSchema: z.ZodType<Prisma.TripayTransaksiGroupByArgs> = z.object({
-  where: TripayTransaksiWhereInputSchema.optional(),
+  where: TripayTransaksiWhereInputSchema.optional(), 
   orderBy: z.union([ TripayTransaksiOrderByWithAggregationInputSchema.array(), TripayTransaksiOrderByWithAggregationInputSchema ]).optional(),
-  by: TripayTransaksiScalarFieldEnumSchema.array(),
-  having: TripayTransaksiScalarWhereWithAggregatesInputSchema.optional(),
+  by: TripayTransaksiScalarFieldEnumSchema.array(), 
+  having: TripayTransaksiScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34145,21 +36543,21 @@ export const TripayTransaksiGroupByArgsSchema: z.ZodType<Prisma.TripayTransaksiG
 export const TripayTransaksiFindUniqueArgsSchema: z.ZodType<Prisma.TripayTransaksiFindUniqueArgs> = z.object({
   select: TripayTransaksiSelectSchema.optional(),
   include: TripayTransaksiIncludeSchema.optional(),
-  where: TripayTransaksiWhereUniqueInputSchema,
+  where: TripayTransaksiWhereUniqueInputSchema, 
 }).strict();
 
 export const TripayTransaksiFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.TripayTransaksiFindUniqueOrThrowArgs> = z.object({
   select: TripayTransaksiSelectSchema.optional(),
   include: TripayTransaksiIncludeSchema.optional(),
-  where: TripayTransaksiWhereUniqueInputSchema,
+  where: TripayTransaksiWhereUniqueInputSchema, 
 }).strict();
 
 export const ClientFindFirstArgsSchema: z.ZodType<Prisma.ClientFindFirstArgs> = z.object({
   select: ClientSelectSchema.optional(),
   include: ClientIncludeSchema.optional(),
-  where: ClientWhereInputSchema.optional(),
+  where: ClientWhereInputSchema.optional(), 
   orderBy: z.union([ ClientOrderByWithRelationInputSchema.array(), ClientOrderByWithRelationInputSchema ]).optional(),
-  cursor: ClientWhereUniqueInputSchema.optional(),
+  cursor: ClientWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ ClientScalarFieldEnumSchema, ClientScalarFieldEnumSchema.array() ]).optional(),
@@ -34168,9 +36566,9 @@ export const ClientFindFirstArgsSchema: z.ZodType<Prisma.ClientFindFirstArgs> = 
 export const ClientFindFirstOrThrowArgsSchema: z.ZodType<Prisma.ClientFindFirstOrThrowArgs> = z.object({
   select: ClientSelectSchema.optional(),
   include: ClientIncludeSchema.optional(),
-  where: ClientWhereInputSchema.optional(),
+  where: ClientWhereInputSchema.optional(), 
   orderBy: z.union([ ClientOrderByWithRelationInputSchema.array(), ClientOrderByWithRelationInputSchema ]).optional(),
-  cursor: ClientWhereUniqueInputSchema.optional(),
+  cursor: ClientWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ ClientScalarFieldEnumSchema, ClientScalarFieldEnumSchema.array() ]).optional(),
@@ -34179,27 +36577,27 @@ export const ClientFindFirstOrThrowArgsSchema: z.ZodType<Prisma.ClientFindFirstO
 export const ClientFindManyArgsSchema: z.ZodType<Prisma.ClientFindManyArgs> = z.object({
   select: ClientSelectSchema.optional(),
   include: ClientIncludeSchema.optional(),
-  where: ClientWhereInputSchema.optional(),
+  where: ClientWhereInputSchema.optional(), 
   orderBy: z.union([ ClientOrderByWithRelationInputSchema.array(), ClientOrderByWithRelationInputSchema ]).optional(),
-  cursor: ClientWhereUniqueInputSchema.optional(),
+  cursor: ClientWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ ClientScalarFieldEnumSchema, ClientScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const ClientAggregateArgsSchema: z.ZodType<Prisma.ClientAggregateArgs> = z.object({
-  where: ClientWhereInputSchema.optional(),
+  where: ClientWhereInputSchema.optional(), 
   orderBy: z.union([ ClientOrderByWithRelationInputSchema.array(), ClientOrderByWithRelationInputSchema ]).optional(),
-  cursor: ClientWhereUniqueInputSchema.optional(),
+  cursor: ClientWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const ClientGroupByArgsSchema: z.ZodType<Prisma.ClientGroupByArgs> = z.object({
-  where: ClientWhereInputSchema.optional(),
+  where: ClientWhereInputSchema.optional(), 
   orderBy: z.union([ ClientOrderByWithAggregationInputSchema.array(), ClientOrderByWithAggregationInputSchema ]).optional(),
-  by: ClientScalarFieldEnumSchema.array(),
-  having: ClientScalarWhereWithAggregatesInputSchema.optional(),
+  by: ClientScalarFieldEnumSchema.array(), 
+  having: ClientScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34207,21 +36605,21 @@ export const ClientGroupByArgsSchema: z.ZodType<Prisma.ClientGroupByArgs> = z.ob
 export const ClientFindUniqueArgsSchema: z.ZodType<Prisma.ClientFindUniqueArgs> = z.object({
   select: ClientSelectSchema.optional(),
   include: ClientIncludeSchema.optional(),
-  where: ClientWhereUniqueInputSchema,
+  where: ClientWhereUniqueInputSchema, 
 }).strict();
 
 export const ClientFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.ClientFindUniqueOrThrowArgs> = z.object({
   select: ClientSelectSchema.optional(),
   include: ClientIncludeSchema.optional(),
-  where: ClientWhereUniqueInputSchema,
+  where: ClientWhereUniqueInputSchema, 
 }).strict();
 
 export const LayananFindFirstArgsSchema: z.ZodType<Prisma.LayananFindFirstArgs> = z.object({
   select: LayananSelectSchema.optional(),
   include: LayananIncludeSchema.optional(),
-  where: LayananWhereInputSchema.optional(),
+  where: LayananWhereInputSchema.optional(), 
   orderBy: z.union([ LayananOrderByWithRelationInputSchema.array(), LayananOrderByWithRelationInputSchema ]).optional(),
-  cursor: LayananWhereUniqueInputSchema.optional(),
+  cursor: LayananWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ LayananScalarFieldEnumSchema, LayananScalarFieldEnumSchema.array() ]).optional(),
@@ -34230,9 +36628,9 @@ export const LayananFindFirstArgsSchema: z.ZodType<Prisma.LayananFindFirstArgs> 
 export const LayananFindFirstOrThrowArgsSchema: z.ZodType<Prisma.LayananFindFirstOrThrowArgs> = z.object({
   select: LayananSelectSchema.optional(),
   include: LayananIncludeSchema.optional(),
-  where: LayananWhereInputSchema.optional(),
+  where: LayananWhereInputSchema.optional(), 
   orderBy: z.union([ LayananOrderByWithRelationInputSchema.array(), LayananOrderByWithRelationInputSchema ]).optional(),
-  cursor: LayananWhereUniqueInputSchema.optional(),
+  cursor: LayananWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ LayananScalarFieldEnumSchema, LayananScalarFieldEnumSchema.array() ]).optional(),
@@ -34241,27 +36639,27 @@ export const LayananFindFirstOrThrowArgsSchema: z.ZodType<Prisma.LayananFindFirs
 export const LayananFindManyArgsSchema: z.ZodType<Prisma.LayananFindManyArgs> = z.object({
   select: LayananSelectSchema.optional(),
   include: LayananIncludeSchema.optional(),
-  where: LayananWhereInputSchema.optional(),
+  where: LayananWhereInputSchema.optional(), 
   orderBy: z.union([ LayananOrderByWithRelationInputSchema.array(), LayananOrderByWithRelationInputSchema ]).optional(),
-  cursor: LayananWhereUniqueInputSchema.optional(),
+  cursor: LayananWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ LayananScalarFieldEnumSchema, LayananScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const LayananAggregateArgsSchema: z.ZodType<Prisma.LayananAggregateArgs> = z.object({
-  where: LayananWhereInputSchema.optional(),
+  where: LayananWhereInputSchema.optional(), 
   orderBy: z.union([ LayananOrderByWithRelationInputSchema.array(), LayananOrderByWithRelationInputSchema ]).optional(),
-  cursor: LayananWhereUniqueInputSchema.optional(),
+  cursor: LayananWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const LayananGroupByArgsSchema: z.ZodType<Prisma.LayananGroupByArgs> = z.object({
-  where: LayananWhereInputSchema.optional(),
+  where: LayananWhereInputSchema.optional(), 
   orderBy: z.union([ LayananOrderByWithAggregationInputSchema.array(), LayananOrderByWithAggregationInputSchema ]).optional(),
-  by: LayananScalarFieldEnumSchema.array(),
-  having: LayananScalarWhereWithAggregatesInputSchema.optional(),
+  by: LayananScalarFieldEnumSchema.array(), 
+  having: LayananScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34269,21 +36667,21 @@ export const LayananGroupByArgsSchema: z.ZodType<Prisma.LayananGroupByArgs> = z.
 export const LayananFindUniqueArgsSchema: z.ZodType<Prisma.LayananFindUniqueArgs> = z.object({
   select: LayananSelectSchema.optional(),
   include: LayananIncludeSchema.optional(),
-  where: LayananWhereUniqueInputSchema,
+  where: LayananWhereUniqueInputSchema, 
 }).strict();
 
 export const LayananFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.LayananFindUniqueOrThrowArgs> = z.object({
   select: LayananSelectSchema.optional(),
   include: LayananIncludeSchema.optional(),
-  where: LayananWhereUniqueInputSchema,
+  where: LayananWhereUniqueInputSchema, 
 }).strict();
 
 export const ClientPeroranganFindFirstArgsSchema: z.ZodType<Prisma.ClientPeroranganFindFirstArgs> = z.object({
   select: ClientPeroranganSelectSchema.optional(),
   include: ClientPeroranganIncludeSchema.optional(),
-  where: ClientPeroranganWhereInputSchema.optional(),
+  where: ClientPeroranganWhereInputSchema.optional(), 
   orderBy: z.union([ ClientPeroranganOrderByWithRelationInputSchema.array(), ClientPeroranganOrderByWithRelationInputSchema ]).optional(),
-  cursor: ClientPeroranganWhereUniqueInputSchema.optional(),
+  cursor: ClientPeroranganWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ ClientPeroranganScalarFieldEnumSchema, ClientPeroranganScalarFieldEnumSchema.array() ]).optional(),
@@ -34292,9 +36690,9 @@ export const ClientPeroranganFindFirstArgsSchema: z.ZodType<Prisma.ClientPeroran
 export const ClientPeroranganFindFirstOrThrowArgsSchema: z.ZodType<Prisma.ClientPeroranganFindFirstOrThrowArgs> = z.object({
   select: ClientPeroranganSelectSchema.optional(),
   include: ClientPeroranganIncludeSchema.optional(),
-  where: ClientPeroranganWhereInputSchema.optional(),
+  where: ClientPeroranganWhereInputSchema.optional(), 
   orderBy: z.union([ ClientPeroranganOrderByWithRelationInputSchema.array(), ClientPeroranganOrderByWithRelationInputSchema ]).optional(),
-  cursor: ClientPeroranganWhereUniqueInputSchema.optional(),
+  cursor: ClientPeroranganWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ ClientPeroranganScalarFieldEnumSchema, ClientPeroranganScalarFieldEnumSchema.array() ]).optional(),
@@ -34303,27 +36701,27 @@ export const ClientPeroranganFindFirstOrThrowArgsSchema: z.ZodType<Prisma.Client
 export const ClientPeroranganFindManyArgsSchema: z.ZodType<Prisma.ClientPeroranganFindManyArgs> = z.object({
   select: ClientPeroranganSelectSchema.optional(),
   include: ClientPeroranganIncludeSchema.optional(),
-  where: ClientPeroranganWhereInputSchema.optional(),
+  where: ClientPeroranganWhereInputSchema.optional(), 
   orderBy: z.union([ ClientPeroranganOrderByWithRelationInputSchema.array(), ClientPeroranganOrderByWithRelationInputSchema ]).optional(),
-  cursor: ClientPeroranganWhereUniqueInputSchema.optional(),
+  cursor: ClientPeroranganWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ ClientPeroranganScalarFieldEnumSchema, ClientPeroranganScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const ClientPeroranganAggregateArgsSchema: z.ZodType<Prisma.ClientPeroranganAggregateArgs> = z.object({
-  where: ClientPeroranganWhereInputSchema.optional(),
+  where: ClientPeroranganWhereInputSchema.optional(), 
   orderBy: z.union([ ClientPeroranganOrderByWithRelationInputSchema.array(), ClientPeroranganOrderByWithRelationInputSchema ]).optional(),
-  cursor: ClientPeroranganWhereUniqueInputSchema.optional(),
+  cursor: ClientPeroranganWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const ClientPeroranganGroupByArgsSchema: z.ZodType<Prisma.ClientPeroranganGroupByArgs> = z.object({
-  where: ClientPeroranganWhereInputSchema.optional(),
+  where: ClientPeroranganWhereInputSchema.optional(), 
   orderBy: z.union([ ClientPeroranganOrderByWithAggregationInputSchema.array(), ClientPeroranganOrderByWithAggregationInputSchema ]).optional(),
-  by: ClientPeroranganScalarFieldEnumSchema.array(),
-  having: ClientPeroranganScalarWhereWithAggregatesInputSchema.optional(),
+  by: ClientPeroranganScalarFieldEnumSchema.array(), 
+  having: ClientPeroranganScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34331,21 +36729,21 @@ export const ClientPeroranganGroupByArgsSchema: z.ZodType<Prisma.ClientPeroranga
 export const ClientPeroranganFindUniqueArgsSchema: z.ZodType<Prisma.ClientPeroranganFindUniqueArgs> = z.object({
   select: ClientPeroranganSelectSchema.optional(),
   include: ClientPeroranganIncludeSchema.optional(),
-  where: ClientPeroranganWhereUniqueInputSchema,
+  where: ClientPeroranganWhereUniqueInputSchema, 
 }).strict();
 
 export const ClientPeroranganFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.ClientPeroranganFindUniqueOrThrowArgs> = z.object({
   select: ClientPeroranganSelectSchema.optional(),
   include: ClientPeroranganIncludeSchema.optional(),
-  where: ClientPeroranganWhereUniqueInputSchema,
+  where: ClientPeroranganWhereUniqueInputSchema, 
 }).strict();
 
 export const SessionFindFirstArgsSchema: z.ZodType<Prisma.SessionFindFirstArgs> = z.object({
   select: SessionSelectSchema.optional(),
   include: SessionIncludeSchema.optional(),
-  where: SessionWhereInputSchema.optional(),
+  where: SessionWhereInputSchema.optional(), 
   orderBy: z.union([ SessionOrderByWithRelationInputSchema.array(), SessionOrderByWithRelationInputSchema ]).optional(),
-  cursor: SessionWhereUniqueInputSchema.optional(),
+  cursor: SessionWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ SessionScalarFieldEnumSchema, SessionScalarFieldEnumSchema.array() ]).optional(),
@@ -34354,9 +36752,9 @@ export const SessionFindFirstArgsSchema: z.ZodType<Prisma.SessionFindFirstArgs> 
 export const SessionFindFirstOrThrowArgsSchema: z.ZodType<Prisma.SessionFindFirstOrThrowArgs> = z.object({
   select: SessionSelectSchema.optional(),
   include: SessionIncludeSchema.optional(),
-  where: SessionWhereInputSchema.optional(),
+  where: SessionWhereInputSchema.optional(), 
   orderBy: z.union([ SessionOrderByWithRelationInputSchema.array(), SessionOrderByWithRelationInputSchema ]).optional(),
-  cursor: SessionWhereUniqueInputSchema.optional(),
+  cursor: SessionWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ SessionScalarFieldEnumSchema, SessionScalarFieldEnumSchema.array() ]).optional(),
@@ -34365,27 +36763,27 @@ export const SessionFindFirstOrThrowArgsSchema: z.ZodType<Prisma.SessionFindFirs
 export const SessionFindManyArgsSchema: z.ZodType<Prisma.SessionFindManyArgs> = z.object({
   select: SessionSelectSchema.optional(),
   include: SessionIncludeSchema.optional(),
-  where: SessionWhereInputSchema.optional(),
+  where: SessionWhereInputSchema.optional(), 
   orderBy: z.union([ SessionOrderByWithRelationInputSchema.array(), SessionOrderByWithRelationInputSchema ]).optional(),
-  cursor: SessionWhereUniqueInputSchema.optional(),
+  cursor: SessionWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ SessionScalarFieldEnumSchema, SessionScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const SessionAggregateArgsSchema: z.ZodType<Prisma.SessionAggregateArgs> = z.object({
-  where: SessionWhereInputSchema.optional(),
+  where: SessionWhereInputSchema.optional(), 
   orderBy: z.union([ SessionOrderByWithRelationInputSchema.array(), SessionOrderByWithRelationInputSchema ]).optional(),
-  cursor: SessionWhereUniqueInputSchema.optional(),
+  cursor: SessionWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const SessionGroupByArgsSchema: z.ZodType<Prisma.SessionGroupByArgs> = z.object({
-  where: SessionWhereInputSchema.optional(),
+  where: SessionWhereInputSchema.optional(), 
   orderBy: z.union([ SessionOrderByWithAggregationInputSchema.array(), SessionOrderByWithAggregationInputSchema ]).optional(),
-  by: SessionScalarFieldEnumSchema.array(),
-  having: SessionScalarWhereWithAggregatesInputSchema.optional(),
+  by: SessionScalarFieldEnumSchema.array(), 
+  having: SessionScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34393,21 +36791,21 @@ export const SessionGroupByArgsSchema: z.ZodType<Prisma.SessionGroupByArgs> = z.
 export const SessionFindUniqueArgsSchema: z.ZodType<Prisma.SessionFindUniqueArgs> = z.object({
   select: SessionSelectSchema.optional(),
   include: SessionIncludeSchema.optional(),
-  where: SessionWhereUniqueInputSchema,
+  where: SessionWhereUniqueInputSchema, 
 }).strict();
 
 export const SessionFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.SessionFindUniqueOrThrowArgs> = z.object({
   select: SessionSelectSchema.optional(),
   include: SessionIncludeSchema.optional(),
-  where: SessionWhereUniqueInputSchema,
+  where: SessionWhereUniqueInputSchema, 
 }).strict();
 
 export const RouterFindFirstArgsSchema: z.ZodType<Prisma.RouterFindFirstArgs> = z.object({
   select: RouterSelectSchema.optional(),
   include: RouterIncludeSchema.optional(),
-  where: RouterWhereInputSchema.optional(),
+  where: RouterWhereInputSchema.optional(), 
   orderBy: z.union([ RouterOrderByWithRelationInputSchema.array(), RouterOrderByWithRelationInputSchema ]).optional(),
-  cursor: RouterWhereUniqueInputSchema.optional(),
+  cursor: RouterWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ RouterScalarFieldEnumSchema, RouterScalarFieldEnumSchema.array() ]).optional(),
@@ -34416,9 +36814,9 @@ export const RouterFindFirstArgsSchema: z.ZodType<Prisma.RouterFindFirstArgs> = 
 export const RouterFindFirstOrThrowArgsSchema: z.ZodType<Prisma.RouterFindFirstOrThrowArgs> = z.object({
   select: RouterSelectSchema.optional(),
   include: RouterIncludeSchema.optional(),
-  where: RouterWhereInputSchema.optional(),
+  where: RouterWhereInputSchema.optional(), 
   orderBy: z.union([ RouterOrderByWithRelationInputSchema.array(), RouterOrderByWithRelationInputSchema ]).optional(),
-  cursor: RouterWhereUniqueInputSchema.optional(),
+  cursor: RouterWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ RouterScalarFieldEnumSchema, RouterScalarFieldEnumSchema.array() ]).optional(),
@@ -34427,27 +36825,27 @@ export const RouterFindFirstOrThrowArgsSchema: z.ZodType<Prisma.RouterFindFirstO
 export const RouterFindManyArgsSchema: z.ZodType<Prisma.RouterFindManyArgs> = z.object({
   select: RouterSelectSchema.optional(),
   include: RouterIncludeSchema.optional(),
-  where: RouterWhereInputSchema.optional(),
+  where: RouterWhereInputSchema.optional(), 
   orderBy: z.union([ RouterOrderByWithRelationInputSchema.array(), RouterOrderByWithRelationInputSchema ]).optional(),
-  cursor: RouterWhereUniqueInputSchema.optional(),
+  cursor: RouterWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ RouterScalarFieldEnumSchema, RouterScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const RouterAggregateArgsSchema: z.ZodType<Prisma.RouterAggregateArgs> = z.object({
-  where: RouterWhereInputSchema.optional(),
+  where: RouterWhereInputSchema.optional(), 
   orderBy: z.union([ RouterOrderByWithRelationInputSchema.array(), RouterOrderByWithRelationInputSchema ]).optional(),
-  cursor: RouterWhereUniqueInputSchema.optional(),
+  cursor: RouterWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const RouterGroupByArgsSchema: z.ZodType<Prisma.RouterGroupByArgs> = z.object({
-  where: RouterWhereInputSchema.optional(),
+  where: RouterWhereInputSchema.optional(), 
   orderBy: z.union([ RouterOrderByWithAggregationInputSchema.array(), RouterOrderByWithAggregationInputSchema ]).optional(),
-  by: RouterScalarFieldEnumSchema.array(),
-  having: RouterScalarWhereWithAggregatesInputSchema.optional(),
+  by: RouterScalarFieldEnumSchema.array(), 
+  having: RouterScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34455,21 +36853,21 @@ export const RouterGroupByArgsSchema: z.ZodType<Prisma.RouterGroupByArgs> = z.ob
 export const RouterFindUniqueArgsSchema: z.ZodType<Prisma.RouterFindUniqueArgs> = z.object({
   select: RouterSelectSchema.optional(),
   include: RouterIncludeSchema.optional(),
-  where: RouterWhereUniqueInputSchema,
+  where: RouterWhereUniqueInputSchema, 
 }).strict();
 
 export const RouterFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.RouterFindUniqueOrThrowArgs> = z.object({
   select: RouterSelectSchema.optional(),
   include: RouterIncludeSchema.optional(),
-  where: RouterWhereUniqueInputSchema,
+  where: RouterWhereUniqueInputSchema, 
 }).strict();
 
 export const PelangganFindFirstArgsSchema: z.ZodType<Prisma.PelangganFindFirstArgs> = z.object({
   select: PelangganSelectSchema.optional(),
   include: PelangganIncludeSchema.optional(),
-  where: PelangganWhereInputSchema.optional(),
+  where: PelangganWhereInputSchema.optional(), 
   orderBy: z.union([ PelangganOrderByWithRelationInputSchema.array(), PelangganOrderByWithRelationInputSchema ]).optional(),
-  cursor: PelangganWhereUniqueInputSchema.optional(),
+  cursor: PelangganWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PelangganScalarFieldEnumSchema, PelangganScalarFieldEnumSchema.array() ]).optional(),
@@ -34478,9 +36876,9 @@ export const PelangganFindFirstArgsSchema: z.ZodType<Prisma.PelangganFindFirstAr
 export const PelangganFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PelangganFindFirstOrThrowArgs> = z.object({
   select: PelangganSelectSchema.optional(),
   include: PelangganIncludeSchema.optional(),
-  where: PelangganWhereInputSchema.optional(),
+  where: PelangganWhereInputSchema.optional(), 
   orderBy: z.union([ PelangganOrderByWithRelationInputSchema.array(), PelangganOrderByWithRelationInputSchema ]).optional(),
-  cursor: PelangganWhereUniqueInputSchema.optional(),
+  cursor: PelangganWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PelangganScalarFieldEnumSchema, PelangganScalarFieldEnumSchema.array() ]).optional(),
@@ -34489,27 +36887,27 @@ export const PelangganFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PelangganFind
 export const PelangganFindManyArgsSchema: z.ZodType<Prisma.PelangganFindManyArgs> = z.object({
   select: PelangganSelectSchema.optional(),
   include: PelangganIncludeSchema.optional(),
-  where: PelangganWhereInputSchema.optional(),
+  where: PelangganWhereInputSchema.optional(), 
   orderBy: z.union([ PelangganOrderByWithRelationInputSchema.array(), PelangganOrderByWithRelationInputSchema ]).optional(),
-  cursor: PelangganWhereUniqueInputSchema.optional(),
+  cursor: PelangganWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PelangganScalarFieldEnumSchema, PelangganScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PelangganAggregateArgsSchema: z.ZodType<Prisma.PelangganAggregateArgs> = z.object({
-  where: PelangganWhereInputSchema.optional(),
+  where: PelangganWhereInputSchema.optional(), 
   orderBy: z.union([ PelangganOrderByWithRelationInputSchema.array(), PelangganOrderByWithRelationInputSchema ]).optional(),
-  cursor: PelangganWhereUniqueInputSchema.optional(),
+  cursor: PelangganWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PelangganGroupByArgsSchema: z.ZodType<Prisma.PelangganGroupByArgs> = z.object({
-  where: PelangganWhereInputSchema.optional(),
+  where: PelangganWhereInputSchema.optional(), 
   orderBy: z.union([ PelangganOrderByWithAggregationInputSchema.array(), PelangganOrderByWithAggregationInputSchema ]).optional(),
-  by: PelangganScalarFieldEnumSchema.array(),
-  having: PelangganScalarWhereWithAggregatesInputSchema.optional(),
+  by: PelangganScalarFieldEnumSchema.array(), 
+  having: PelangganScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34517,21 +36915,21 @@ export const PelangganGroupByArgsSchema: z.ZodType<Prisma.PelangganGroupByArgs> 
 export const PelangganFindUniqueArgsSchema: z.ZodType<Prisma.PelangganFindUniqueArgs> = z.object({
   select: PelangganSelectSchema.optional(),
   include: PelangganIncludeSchema.optional(),
-  where: PelangganWhereUniqueInputSchema,
+  where: PelangganWhereUniqueInputSchema, 
 }).strict();
 
 export const PelangganFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PelangganFindUniqueOrThrowArgs> = z.object({
   select: PelangganSelectSchema.optional(),
   include: PelangganIncludeSchema.optional(),
-  where: PelangganWhereUniqueInputSchema,
+  where: PelangganWhereUniqueInputSchema, 
 }).strict();
 
 export const StaffPelangganScopeFindFirstArgsSchema: z.ZodType<Prisma.StaffPelangganScopeFindFirstArgs> = z.object({
   select: StaffPelangganScopeSelectSchema.optional(),
   include: StaffPelangganScopeIncludeSchema.optional(),
-  where: StaffPelangganScopeWhereInputSchema.optional(),
+  where: StaffPelangganScopeWhereInputSchema.optional(), 
   orderBy: z.union([ StaffPelangganScopeOrderByWithRelationInputSchema.array(), StaffPelangganScopeOrderByWithRelationInputSchema ]).optional(),
-  cursor: StaffPelangganScopeWhereUniqueInputSchema.optional(),
+  cursor: StaffPelangganScopeWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ StaffPelangganScopeScalarFieldEnumSchema, StaffPelangganScopeScalarFieldEnumSchema.array() ]).optional(),
@@ -34540,9 +36938,9 @@ export const StaffPelangganScopeFindFirstArgsSchema: z.ZodType<Prisma.StaffPelan
 export const StaffPelangganScopeFindFirstOrThrowArgsSchema: z.ZodType<Prisma.StaffPelangganScopeFindFirstOrThrowArgs> = z.object({
   select: StaffPelangganScopeSelectSchema.optional(),
   include: StaffPelangganScopeIncludeSchema.optional(),
-  where: StaffPelangganScopeWhereInputSchema.optional(),
+  where: StaffPelangganScopeWhereInputSchema.optional(), 
   orderBy: z.union([ StaffPelangganScopeOrderByWithRelationInputSchema.array(), StaffPelangganScopeOrderByWithRelationInputSchema ]).optional(),
-  cursor: StaffPelangganScopeWhereUniqueInputSchema.optional(),
+  cursor: StaffPelangganScopeWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ StaffPelangganScopeScalarFieldEnumSchema, StaffPelangganScopeScalarFieldEnumSchema.array() ]).optional(),
@@ -34551,27 +36949,27 @@ export const StaffPelangganScopeFindFirstOrThrowArgsSchema: z.ZodType<Prisma.Sta
 export const StaffPelangganScopeFindManyArgsSchema: z.ZodType<Prisma.StaffPelangganScopeFindManyArgs> = z.object({
   select: StaffPelangganScopeSelectSchema.optional(),
   include: StaffPelangganScopeIncludeSchema.optional(),
-  where: StaffPelangganScopeWhereInputSchema.optional(),
+  where: StaffPelangganScopeWhereInputSchema.optional(), 
   orderBy: z.union([ StaffPelangganScopeOrderByWithRelationInputSchema.array(), StaffPelangganScopeOrderByWithRelationInputSchema ]).optional(),
-  cursor: StaffPelangganScopeWhereUniqueInputSchema.optional(),
+  cursor: StaffPelangganScopeWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ StaffPelangganScopeScalarFieldEnumSchema, StaffPelangganScopeScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const StaffPelangganScopeAggregateArgsSchema: z.ZodType<Prisma.StaffPelangganScopeAggregateArgs> = z.object({
-  where: StaffPelangganScopeWhereInputSchema.optional(),
+  where: StaffPelangganScopeWhereInputSchema.optional(), 
   orderBy: z.union([ StaffPelangganScopeOrderByWithRelationInputSchema.array(), StaffPelangganScopeOrderByWithRelationInputSchema ]).optional(),
-  cursor: StaffPelangganScopeWhereUniqueInputSchema.optional(),
+  cursor: StaffPelangganScopeWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const StaffPelangganScopeGroupByArgsSchema: z.ZodType<Prisma.StaffPelangganScopeGroupByArgs> = z.object({
-  where: StaffPelangganScopeWhereInputSchema.optional(),
+  where: StaffPelangganScopeWhereInputSchema.optional(), 
   orderBy: z.union([ StaffPelangganScopeOrderByWithAggregationInputSchema.array(), StaffPelangganScopeOrderByWithAggregationInputSchema ]).optional(),
-  by: StaffPelangganScopeScalarFieldEnumSchema.array(),
-  having: StaffPelangganScopeScalarWhereWithAggregatesInputSchema.optional(),
+  by: StaffPelangganScopeScalarFieldEnumSchema.array(), 
+  having: StaffPelangganScopeScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34579,20 +36977,20 @@ export const StaffPelangganScopeGroupByArgsSchema: z.ZodType<Prisma.StaffPelangg
 export const StaffPelangganScopeFindUniqueArgsSchema: z.ZodType<Prisma.StaffPelangganScopeFindUniqueArgs> = z.object({
   select: StaffPelangganScopeSelectSchema.optional(),
   include: StaffPelangganScopeIncludeSchema.optional(),
-  where: StaffPelangganScopeWhereUniqueInputSchema,
+  where: StaffPelangganScopeWhereUniqueInputSchema, 
 }).strict();
 
 export const StaffPelangganScopeFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.StaffPelangganScopeFindUniqueOrThrowArgs> = z.object({
   select: StaffPelangganScopeSelectSchema.optional(),
   include: StaffPelangganScopeIncludeSchema.optional(),
-  where: StaffPelangganScopeWhereUniqueInputSchema,
+  where: StaffPelangganScopeWhereUniqueInputSchema, 
 }).strict();
 
 export const PppSyncFindFirstArgsSchema: z.ZodType<Prisma.PppSyncFindFirstArgs> = z.object({
   select: PppSyncSelectSchema.optional(),
-  where: PppSyncWhereInputSchema.optional(),
+  where: PppSyncWhereInputSchema.optional(), 
   orderBy: z.union([ PppSyncOrderByWithRelationInputSchema.array(), PppSyncOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppSyncWhereUniqueInputSchema.optional(),
+  cursor: PppSyncWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppSyncScalarFieldEnumSchema, PppSyncScalarFieldEnumSchema.array() ]).optional(),
@@ -34600,9 +36998,9 @@ export const PppSyncFindFirstArgsSchema: z.ZodType<Prisma.PppSyncFindFirstArgs> 
 
 export const PppSyncFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PppSyncFindFirstOrThrowArgs> = z.object({
   select: PppSyncSelectSchema.optional(),
-  where: PppSyncWhereInputSchema.optional(),
+  where: PppSyncWhereInputSchema.optional(), 
   orderBy: z.union([ PppSyncOrderByWithRelationInputSchema.array(), PppSyncOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppSyncWhereUniqueInputSchema.optional(),
+  cursor: PppSyncWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppSyncScalarFieldEnumSchema, PppSyncScalarFieldEnumSchema.array() ]).optional(),
@@ -34610,47 +37008,47 @@ export const PppSyncFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PppSyncFindFirs
 
 export const PppSyncFindManyArgsSchema: z.ZodType<Prisma.PppSyncFindManyArgs> = z.object({
   select: PppSyncSelectSchema.optional(),
-  where: PppSyncWhereInputSchema.optional(),
+  where: PppSyncWhereInputSchema.optional(), 
   orderBy: z.union([ PppSyncOrderByWithRelationInputSchema.array(), PppSyncOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppSyncWhereUniqueInputSchema.optional(),
+  cursor: PppSyncWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppSyncScalarFieldEnumSchema, PppSyncScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PppSyncAggregateArgsSchema: z.ZodType<Prisma.PppSyncAggregateArgs> = z.object({
-  where: PppSyncWhereInputSchema.optional(),
+  where: PppSyncWhereInputSchema.optional(), 
   orderBy: z.union([ PppSyncOrderByWithRelationInputSchema.array(), PppSyncOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppSyncWhereUniqueInputSchema.optional(),
+  cursor: PppSyncWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PppSyncGroupByArgsSchema: z.ZodType<Prisma.PppSyncGroupByArgs> = z.object({
-  where: PppSyncWhereInputSchema.optional(),
+  where: PppSyncWhereInputSchema.optional(), 
   orderBy: z.union([ PppSyncOrderByWithAggregationInputSchema.array(), PppSyncOrderByWithAggregationInputSchema ]).optional(),
-  by: PppSyncScalarFieldEnumSchema.array(),
-  having: PppSyncScalarWhereWithAggregatesInputSchema.optional(),
+  by: PppSyncScalarFieldEnumSchema.array(), 
+  having: PppSyncScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PppSyncFindUniqueArgsSchema: z.ZodType<Prisma.PppSyncFindUniqueArgs> = z.object({
   select: PppSyncSelectSchema.optional(),
-  where: PppSyncWhereUniqueInputSchema,
+  where: PppSyncWhereUniqueInputSchema, 
 }).strict();
 
 export const PppSyncFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PppSyncFindUniqueOrThrowArgs> = z.object({
   select: PppSyncSelectSchema.optional(),
-  where: PppSyncWhereUniqueInputSchema,
+  where: PppSyncWhereUniqueInputSchema, 
 }).strict();
 
 export const PppSecretFindFirstArgsSchema: z.ZodType<Prisma.PppSecretFindFirstArgs> = z.object({
   select: PppSecretSelectSchema.optional(),
   include: PppSecretIncludeSchema.optional(),
-  where: PppSecretWhereInputSchema.optional(),
+  where: PppSecretWhereInputSchema.optional(), 
   orderBy: z.union([ PppSecretOrderByWithRelationInputSchema.array(), PppSecretOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppSecretWhereUniqueInputSchema.optional(),
+  cursor: PppSecretWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppSecretScalarFieldEnumSchema, PppSecretScalarFieldEnumSchema.array() ]).optional(),
@@ -34659,9 +37057,9 @@ export const PppSecretFindFirstArgsSchema: z.ZodType<Prisma.PppSecretFindFirstAr
 export const PppSecretFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PppSecretFindFirstOrThrowArgs> = z.object({
   select: PppSecretSelectSchema.optional(),
   include: PppSecretIncludeSchema.optional(),
-  where: PppSecretWhereInputSchema.optional(),
+  where: PppSecretWhereInputSchema.optional(), 
   orderBy: z.union([ PppSecretOrderByWithRelationInputSchema.array(), PppSecretOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppSecretWhereUniqueInputSchema.optional(),
+  cursor: PppSecretWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppSecretScalarFieldEnumSchema, PppSecretScalarFieldEnumSchema.array() ]).optional(),
@@ -34670,27 +37068,27 @@ export const PppSecretFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PppSecretFind
 export const PppSecretFindManyArgsSchema: z.ZodType<Prisma.PppSecretFindManyArgs> = z.object({
   select: PppSecretSelectSchema.optional(),
   include: PppSecretIncludeSchema.optional(),
-  where: PppSecretWhereInputSchema.optional(),
+  where: PppSecretWhereInputSchema.optional(), 
   orderBy: z.union([ PppSecretOrderByWithRelationInputSchema.array(), PppSecretOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppSecretWhereUniqueInputSchema.optional(),
+  cursor: PppSecretWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppSecretScalarFieldEnumSchema, PppSecretScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PppSecretAggregateArgsSchema: z.ZodType<Prisma.PppSecretAggregateArgs> = z.object({
-  where: PppSecretWhereInputSchema.optional(),
+  where: PppSecretWhereInputSchema.optional(), 
   orderBy: z.union([ PppSecretOrderByWithRelationInputSchema.array(), PppSecretOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppSecretWhereUniqueInputSchema.optional(),
+  cursor: PppSecretWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PppSecretGroupByArgsSchema: z.ZodType<Prisma.PppSecretGroupByArgs> = z.object({
-  where: PppSecretWhereInputSchema.optional(),
+  where: PppSecretWhereInputSchema.optional(), 
   orderBy: z.union([ PppSecretOrderByWithAggregationInputSchema.array(), PppSecretOrderByWithAggregationInputSchema ]).optional(),
-  by: PppSecretScalarFieldEnumSchema.array(),
-  having: PppSecretScalarWhereWithAggregatesInputSchema.optional(),
+  by: PppSecretScalarFieldEnumSchema.array(), 
+  having: PppSecretScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34698,21 +37096,21 @@ export const PppSecretGroupByArgsSchema: z.ZodType<Prisma.PppSecretGroupByArgs> 
 export const PppSecretFindUniqueArgsSchema: z.ZodType<Prisma.PppSecretFindUniqueArgs> = z.object({
   select: PppSecretSelectSchema.optional(),
   include: PppSecretIncludeSchema.optional(),
-  where: PppSecretWhereUniqueInputSchema,
+  where: PppSecretWhereUniqueInputSchema, 
 }).strict();
 
 export const PppSecretFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PppSecretFindUniqueOrThrowArgs> = z.object({
   select: PppSecretSelectSchema.optional(),
   include: PppSecretIncludeSchema.optional(),
-  where: PppSecretWhereUniqueInputSchema,
+  where: PppSecretWhereUniqueInputSchema, 
 }).strict();
 
 export const PppPackageChangeFindFirstArgsSchema: z.ZodType<Prisma.PppPackageChangeFindFirstArgs> = z.object({
   select: PppPackageChangeSelectSchema.optional(),
   include: PppPackageChangeIncludeSchema.optional(),
-  where: PppPackageChangeWhereInputSchema.optional(),
+  where: PppPackageChangeWhereInputSchema.optional(), 
   orderBy: z.union([ PppPackageChangeOrderByWithRelationInputSchema.array(), PppPackageChangeOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppPackageChangeWhereUniqueInputSchema.optional(),
+  cursor: PppPackageChangeWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppPackageChangeScalarFieldEnumSchema, PppPackageChangeScalarFieldEnumSchema.array() ]).optional(),
@@ -34721,9 +37119,9 @@ export const PppPackageChangeFindFirstArgsSchema: z.ZodType<Prisma.PppPackageCha
 export const PppPackageChangeFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PppPackageChangeFindFirstOrThrowArgs> = z.object({
   select: PppPackageChangeSelectSchema.optional(),
   include: PppPackageChangeIncludeSchema.optional(),
-  where: PppPackageChangeWhereInputSchema.optional(),
+  where: PppPackageChangeWhereInputSchema.optional(), 
   orderBy: z.union([ PppPackageChangeOrderByWithRelationInputSchema.array(), PppPackageChangeOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppPackageChangeWhereUniqueInputSchema.optional(),
+  cursor: PppPackageChangeWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppPackageChangeScalarFieldEnumSchema, PppPackageChangeScalarFieldEnumSchema.array() ]).optional(),
@@ -34732,27 +37130,27 @@ export const PppPackageChangeFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PppPac
 export const PppPackageChangeFindManyArgsSchema: z.ZodType<Prisma.PppPackageChangeFindManyArgs> = z.object({
   select: PppPackageChangeSelectSchema.optional(),
   include: PppPackageChangeIncludeSchema.optional(),
-  where: PppPackageChangeWhereInputSchema.optional(),
+  where: PppPackageChangeWhereInputSchema.optional(), 
   orderBy: z.union([ PppPackageChangeOrderByWithRelationInputSchema.array(), PppPackageChangeOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppPackageChangeWhereUniqueInputSchema.optional(),
+  cursor: PppPackageChangeWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppPackageChangeScalarFieldEnumSchema, PppPackageChangeScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PppPackageChangeAggregateArgsSchema: z.ZodType<Prisma.PppPackageChangeAggregateArgs> = z.object({
-  where: PppPackageChangeWhereInputSchema.optional(),
+  where: PppPackageChangeWhereInputSchema.optional(), 
   orderBy: z.union([ PppPackageChangeOrderByWithRelationInputSchema.array(), PppPackageChangeOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppPackageChangeWhereUniqueInputSchema.optional(),
+  cursor: PppPackageChangeWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PppPackageChangeGroupByArgsSchema: z.ZodType<Prisma.PppPackageChangeGroupByArgs> = z.object({
-  where: PppPackageChangeWhereInputSchema.optional(),
+  where: PppPackageChangeWhereInputSchema.optional(), 
   orderBy: z.union([ PppPackageChangeOrderByWithAggregationInputSchema.array(), PppPackageChangeOrderByWithAggregationInputSchema ]).optional(),
-  by: PppPackageChangeScalarFieldEnumSchema.array(),
-  having: PppPackageChangeScalarWhereWithAggregatesInputSchema.optional(),
+  by: PppPackageChangeScalarFieldEnumSchema.array(), 
+  having: PppPackageChangeScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34760,21 +37158,21 @@ export const PppPackageChangeGroupByArgsSchema: z.ZodType<Prisma.PppPackageChang
 export const PppPackageChangeFindUniqueArgsSchema: z.ZodType<Prisma.PppPackageChangeFindUniqueArgs> = z.object({
   select: PppPackageChangeSelectSchema.optional(),
   include: PppPackageChangeIncludeSchema.optional(),
-  where: PppPackageChangeWhereUniqueInputSchema,
+  where: PppPackageChangeWhereUniqueInputSchema, 
 }).strict();
 
 export const PppPackageChangeFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PppPackageChangeFindUniqueOrThrowArgs> = z.object({
   select: PppPackageChangeSelectSchema.optional(),
   include: PppPackageChangeIncludeSchema.optional(),
-  where: PppPackageChangeWhereUniqueInputSchema,
+  where: PppPackageChangeWhereUniqueInputSchema, 
 }).strict();
 
 export const PppBoosterFindFirstArgsSchema: z.ZodType<Prisma.PppBoosterFindFirstArgs> = z.object({
   select: PppBoosterSelectSchema.optional(),
   include: PppBoosterIncludeSchema.optional(),
-  where: PppBoosterWhereInputSchema.optional(),
+  where: PppBoosterWhereInputSchema.optional(), 
   orderBy: z.union([ PppBoosterOrderByWithRelationInputSchema.array(), PppBoosterOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppBoosterWhereUniqueInputSchema.optional(),
+  cursor: PppBoosterWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppBoosterScalarFieldEnumSchema, PppBoosterScalarFieldEnumSchema.array() ]).optional(),
@@ -34783,9 +37181,9 @@ export const PppBoosterFindFirstArgsSchema: z.ZodType<Prisma.PppBoosterFindFirst
 export const PppBoosterFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PppBoosterFindFirstOrThrowArgs> = z.object({
   select: PppBoosterSelectSchema.optional(),
   include: PppBoosterIncludeSchema.optional(),
-  where: PppBoosterWhereInputSchema.optional(),
+  where: PppBoosterWhereInputSchema.optional(), 
   orderBy: z.union([ PppBoosterOrderByWithRelationInputSchema.array(), PppBoosterOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppBoosterWhereUniqueInputSchema.optional(),
+  cursor: PppBoosterWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppBoosterScalarFieldEnumSchema, PppBoosterScalarFieldEnumSchema.array() ]).optional(),
@@ -34794,27 +37192,27 @@ export const PppBoosterFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PppBoosterFi
 export const PppBoosterFindManyArgsSchema: z.ZodType<Prisma.PppBoosterFindManyArgs> = z.object({
   select: PppBoosterSelectSchema.optional(),
   include: PppBoosterIncludeSchema.optional(),
-  where: PppBoosterWhereInputSchema.optional(),
+  where: PppBoosterWhereInputSchema.optional(), 
   orderBy: z.union([ PppBoosterOrderByWithRelationInputSchema.array(), PppBoosterOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppBoosterWhereUniqueInputSchema.optional(),
+  cursor: PppBoosterWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppBoosterScalarFieldEnumSchema, PppBoosterScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PppBoosterAggregateArgsSchema: z.ZodType<Prisma.PppBoosterAggregateArgs> = z.object({
-  where: PppBoosterWhereInputSchema.optional(),
+  where: PppBoosterWhereInputSchema.optional(), 
   orderBy: z.union([ PppBoosterOrderByWithRelationInputSchema.array(), PppBoosterOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppBoosterWhereUniqueInputSchema.optional(),
+  cursor: PppBoosterWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PppBoosterGroupByArgsSchema: z.ZodType<Prisma.PppBoosterGroupByArgs> = z.object({
-  where: PppBoosterWhereInputSchema.optional(),
+  where: PppBoosterWhereInputSchema.optional(), 
   orderBy: z.union([ PppBoosterOrderByWithAggregationInputSchema.array(), PppBoosterOrderByWithAggregationInputSchema ]).optional(),
-  by: PppBoosterScalarFieldEnumSchema.array(),
-  having: PppBoosterScalarWhereWithAggregatesInputSchema.optional(),
+  by: PppBoosterScalarFieldEnumSchema.array(), 
+  having: PppBoosterScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34822,21 +37220,21 @@ export const PppBoosterGroupByArgsSchema: z.ZodType<Prisma.PppBoosterGroupByArgs
 export const PppBoosterFindUniqueArgsSchema: z.ZodType<Prisma.PppBoosterFindUniqueArgs> = z.object({
   select: PppBoosterSelectSchema.optional(),
   include: PppBoosterIncludeSchema.optional(),
-  where: PppBoosterWhereUniqueInputSchema,
+  where: PppBoosterWhereUniqueInputSchema, 
 }).strict();
 
 export const PppBoosterFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PppBoosterFindUniqueOrThrowArgs> = z.object({
   select: PppBoosterSelectSchema.optional(),
   include: PppBoosterIncludeSchema.optional(),
-  where: PppBoosterWhereUniqueInputSchema,
+  where: PppBoosterWhereUniqueInputSchema, 
 }).strict();
 
 export const PppActiveFindFirstArgsSchema: z.ZodType<Prisma.PppActiveFindFirstArgs> = z.object({
   select: PppActiveSelectSchema.optional(),
   include: PppActiveIncludeSchema.optional(),
-  where: PppActiveWhereInputSchema.optional(),
+  where: PppActiveWhereInputSchema.optional(), 
   orderBy: z.union([ PppActiveOrderByWithRelationInputSchema.array(), PppActiveOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppActiveWhereUniqueInputSchema.optional(),
+  cursor: PppActiveWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppActiveScalarFieldEnumSchema, PppActiveScalarFieldEnumSchema.array() ]).optional(),
@@ -34845,9 +37243,9 @@ export const PppActiveFindFirstArgsSchema: z.ZodType<Prisma.PppActiveFindFirstAr
 export const PppActiveFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PppActiveFindFirstOrThrowArgs> = z.object({
   select: PppActiveSelectSchema.optional(),
   include: PppActiveIncludeSchema.optional(),
-  where: PppActiveWhereInputSchema.optional(),
+  where: PppActiveWhereInputSchema.optional(), 
   orderBy: z.union([ PppActiveOrderByWithRelationInputSchema.array(), PppActiveOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppActiveWhereUniqueInputSchema.optional(),
+  cursor: PppActiveWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppActiveScalarFieldEnumSchema, PppActiveScalarFieldEnumSchema.array() ]).optional(),
@@ -34856,27 +37254,27 @@ export const PppActiveFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PppActiveFind
 export const PppActiveFindManyArgsSchema: z.ZodType<Prisma.PppActiveFindManyArgs> = z.object({
   select: PppActiveSelectSchema.optional(),
   include: PppActiveIncludeSchema.optional(),
-  where: PppActiveWhereInputSchema.optional(),
+  where: PppActiveWhereInputSchema.optional(), 
   orderBy: z.union([ PppActiveOrderByWithRelationInputSchema.array(), PppActiveOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppActiveWhereUniqueInputSchema.optional(),
+  cursor: PppActiveWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PppActiveScalarFieldEnumSchema, PppActiveScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PppActiveAggregateArgsSchema: z.ZodType<Prisma.PppActiveAggregateArgs> = z.object({
-  where: PppActiveWhereInputSchema.optional(),
+  where: PppActiveWhereInputSchema.optional(), 
   orderBy: z.union([ PppActiveOrderByWithRelationInputSchema.array(), PppActiveOrderByWithRelationInputSchema ]).optional(),
-  cursor: PppActiveWhereUniqueInputSchema.optional(),
+  cursor: PppActiveWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PppActiveGroupByArgsSchema: z.ZodType<Prisma.PppActiveGroupByArgs> = z.object({
-  where: PppActiveWhereInputSchema.optional(),
+  where: PppActiveWhereInputSchema.optional(), 
   orderBy: z.union([ PppActiveOrderByWithAggregationInputSchema.array(), PppActiveOrderByWithAggregationInputSchema ]).optional(),
-  by: PppActiveScalarFieldEnumSchema.array(),
-  having: PppActiveScalarWhereWithAggregatesInputSchema.optional(),
+  by: PppActiveScalarFieldEnumSchema.array(), 
+  having: PppActiveScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34884,21 +37282,21 @@ export const PppActiveGroupByArgsSchema: z.ZodType<Prisma.PppActiveGroupByArgs> 
 export const PppActiveFindUniqueArgsSchema: z.ZodType<Prisma.PppActiveFindUniqueArgs> = z.object({
   select: PppActiveSelectSchema.optional(),
   include: PppActiveIncludeSchema.optional(),
-  where: PppActiveWhereUniqueInputSchema,
+  where: PppActiveWhereUniqueInputSchema, 
 }).strict();
 
 export const PppActiveFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PppActiveFindUniqueOrThrowArgs> = z.object({
   select: PppActiveSelectSchema.optional(),
   include: PppActiveIncludeSchema.optional(),
-  where: PppActiveWhereUniqueInputSchema,
+  where: PppActiveWhereUniqueInputSchema, 
 }).strict();
 
 export const PaketFindFirstArgsSchema: z.ZodType<Prisma.PaketFindFirstArgs> = z.object({
   select: PaketSelectSchema.optional(),
   include: PaketIncludeSchema.optional(),
-  where: PaketWhereInputSchema.optional(),
+  where: PaketWhereInputSchema.optional(), 
   orderBy: z.union([ PaketOrderByWithRelationInputSchema.array(), PaketOrderByWithRelationInputSchema ]).optional(),
-  cursor: PaketWhereUniqueInputSchema.optional(),
+  cursor: PaketWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PaketScalarFieldEnumSchema, PaketScalarFieldEnumSchema.array() ]).optional(),
@@ -34907,9 +37305,9 @@ export const PaketFindFirstArgsSchema: z.ZodType<Prisma.PaketFindFirstArgs> = z.
 export const PaketFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PaketFindFirstOrThrowArgs> = z.object({
   select: PaketSelectSchema.optional(),
   include: PaketIncludeSchema.optional(),
-  where: PaketWhereInputSchema.optional(),
+  where: PaketWhereInputSchema.optional(), 
   orderBy: z.union([ PaketOrderByWithRelationInputSchema.array(), PaketOrderByWithRelationInputSchema ]).optional(),
-  cursor: PaketWhereUniqueInputSchema.optional(),
+  cursor: PaketWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PaketScalarFieldEnumSchema, PaketScalarFieldEnumSchema.array() ]).optional(),
@@ -34918,27 +37316,27 @@ export const PaketFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PaketFindFirstOrT
 export const PaketFindManyArgsSchema: z.ZodType<Prisma.PaketFindManyArgs> = z.object({
   select: PaketSelectSchema.optional(),
   include: PaketIncludeSchema.optional(),
-  where: PaketWhereInputSchema.optional(),
+  where: PaketWhereInputSchema.optional(), 
   orderBy: z.union([ PaketOrderByWithRelationInputSchema.array(), PaketOrderByWithRelationInputSchema ]).optional(),
-  cursor: PaketWhereUniqueInputSchema.optional(),
+  cursor: PaketWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PaketScalarFieldEnumSchema, PaketScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PaketAggregateArgsSchema: z.ZodType<Prisma.PaketAggregateArgs> = z.object({
-  where: PaketWhereInputSchema.optional(),
+  where: PaketWhereInputSchema.optional(), 
   orderBy: z.union([ PaketOrderByWithRelationInputSchema.array(), PaketOrderByWithRelationInputSchema ]).optional(),
-  cursor: PaketWhereUniqueInputSchema.optional(),
+  cursor: PaketWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PaketGroupByArgsSchema: z.ZodType<Prisma.PaketGroupByArgs> = z.object({
-  where: PaketWhereInputSchema.optional(),
+  where: PaketWhereInputSchema.optional(), 
   orderBy: z.union([ PaketOrderByWithAggregationInputSchema.array(), PaketOrderByWithAggregationInputSchema ]).optional(),
-  by: PaketScalarFieldEnumSchema.array(),
-  having: PaketScalarWhereWithAggregatesInputSchema.optional(),
+  by: PaketScalarFieldEnumSchema.array(), 
+  having: PaketScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -34946,21 +37344,21 @@ export const PaketGroupByArgsSchema: z.ZodType<Prisma.PaketGroupByArgs> = z.obje
 export const PaketFindUniqueArgsSchema: z.ZodType<Prisma.PaketFindUniqueArgs> = z.object({
   select: PaketSelectSchema.optional(),
   include: PaketIncludeSchema.optional(),
-  where: PaketWhereUniqueInputSchema,
+  where: PaketWhereUniqueInputSchema, 
 }).strict();
 
 export const PaketFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PaketFindUniqueOrThrowArgs> = z.object({
   select: PaketSelectSchema.optional(),
   include: PaketIncludeSchema.optional(),
-  where: PaketWhereUniqueInputSchema,
+  where: PaketWhereUniqueInputSchema, 
 }).strict();
 
 export const PaketRouterFindFirstArgsSchema: z.ZodType<Prisma.PaketRouterFindFirstArgs> = z.object({
   select: PaketRouterSelectSchema.optional(),
   include: PaketRouterIncludeSchema.optional(),
-  where: PaketRouterWhereInputSchema.optional(),
+  where: PaketRouterWhereInputSchema.optional(), 
   orderBy: z.union([ PaketRouterOrderByWithRelationInputSchema.array(), PaketRouterOrderByWithRelationInputSchema ]).optional(),
-  cursor: PaketRouterWhereUniqueInputSchema.optional(),
+  cursor: PaketRouterWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PaketRouterScalarFieldEnumSchema, PaketRouterScalarFieldEnumSchema.array() ]).optional(),
@@ -34969,9 +37367,9 @@ export const PaketRouterFindFirstArgsSchema: z.ZodType<Prisma.PaketRouterFindFir
 export const PaketRouterFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PaketRouterFindFirstOrThrowArgs> = z.object({
   select: PaketRouterSelectSchema.optional(),
   include: PaketRouterIncludeSchema.optional(),
-  where: PaketRouterWhereInputSchema.optional(),
+  where: PaketRouterWhereInputSchema.optional(), 
   orderBy: z.union([ PaketRouterOrderByWithRelationInputSchema.array(), PaketRouterOrderByWithRelationInputSchema ]).optional(),
-  cursor: PaketRouterWhereUniqueInputSchema.optional(),
+  cursor: PaketRouterWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PaketRouterScalarFieldEnumSchema, PaketRouterScalarFieldEnumSchema.array() ]).optional(),
@@ -34980,27 +37378,27 @@ export const PaketRouterFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PaketRouter
 export const PaketRouterFindManyArgsSchema: z.ZodType<Prisma.PaketRouterFindManyArgs> = z.object({
   select: PaketRouterSelectSchema.optional(),
   include: PaketRouterIncludeSchema.optional(),
-  where: PaketRouterWhereInputSchema.optional(),
+  where: PaketRouterWhereInputSchema.optional(), 
   orderBy: z.union([ PaketRouterOrderByWithRelationInputSchema.array(), PaketRouterOrderByWithRelationInputSchema ]).optional(),
-  cursor: PaketRouterWhereUniqueInputSchema.optional(),
+  cursor: PaketRouterWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PaketRouterScalarFieldEnumSchema, PaketRouterScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PaketRouterAggregateArgsSchema: z.ZodType<Prisma.PaketRouterAggregateArgs> = z.object({
-  where: PaketRouterWhereInputSchema.optional(),
+  where: PaketRouterWhereInputSchema.optional(), 
   orderBy: z.union([ PaketRouterOrderByWithRelationInputSchema.array(), PaketRouterOrderByWithRelationInputSchema ]).optional(),
-  cursor: PaketRouterWhereUniqueInputSchema.optional(),
+  cursor: PaketRouterWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PaketRouterGroupByArgsSchema: z.ZodType<Prisma.PaketRouterGroupByArgs> = z.object({
-  where: PaketRouterWhereInputSchema.optional(),
+  where: PaketRouterWhereInputSchema.optional(), 
   orderBy: z.union([ PaketRouterOrderByWithAggregationInputSchema.array(), PaketRouterOrderByWithAggregationInputSchema ]).optional(),
-  by: PaketRouterScalarFieldEnumSchema.array(),
-  having: PaketRouterScalarWhereWithAggregatesInputSchema.optional(),
+  by: PaketRouterScalarFieldEnumSchema.array(), 
+  having: PaketRouterScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35008,21 +37406,21 @@ export const PaketRouterGroupByArgsSchema: z.ZodType<Prisma.PaketRouterGroupByAr
 export const PaketRouterFindUniqueArgsSchema: z.ZodType<Prisma.PaketRouterFindUniqueArgs> = z.object({
   select: PaketRouterSelectSchema.optional(),
   include: PaketRouterIncludeSchema.optional(),
-  where: PaketRouterWhereUniqueInputSchema,
+  where: PaketRouterWhereUniqueInputSchema, 
 }).strict();
 
 export const PaketRouterFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PaketRouterFindUniqueOrThrowArgs> = z.object({
   select: PaketRouterSelectSchema.optional(),
   include: PaketRouterIncludeSchema.optional(),
-  where: PaketRouterWhereUniqueInputSchema,
+  where: PaketRouterWhereUniqueInputSchema, 
 }).strict();
 
 export const BankFindFirstArgsSchema: z.ZodType<Prisma.BankFindFirstArgs> = z.object({
   select: BankSelectSchema.optional(),
   include: BankIncludeSchema.optional(),
-  where: BankWhereInputSchema.optional(),
+  where: BankWhereInputSchema.optional(), 
   orderBy: z.union([ BankOrderByWithRelationInputSchema.array(), BankOrderByWithRelationInputSchema ]).optional(),
-  cursor: BankWhereUniqueInputSchema.optional(),
+  cursor: BankWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ BankScalarFieldEnumSchema, BankScalarFieldEnumSchema.array() ]).optional(),
@@ -35031,9 +37429,9 @@ export const BankFindFirstArgsSchema: z.ZodType<Prisma.BankFindFirstArgs> = z.ob
 export const BankFindFirstOrThrowArgsSchema: z.ZodType<Prisma.BankFindFirstOrThrowArgs> = z.object({
   select: BankSelectSchema.optional(),
   include: BankIncludeSchema.optional(),
-  where: BankWhereInputSchema.optional(),
+  where: BankWhereInputSchema.optional(), 
   orderBy: z.union([ BankOrderByWithRelationInputSchema.array(), BankOrderByWithRelationInputSchema ]).optional(),
-  cursor: BankWhereUniqueInputSchema.optional(),
+  cursor: BankWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ BankScalarFieldEnumSchema, BankScalarFieldEnumSchema.array() ]).optional(),
@@ -35042,27 +37440,27 @@ export const BankFindFirstOrThrowArgsSchema: z.ZodType<Prisma.BankFindFirstOrThr
 export const BankFindManyArgsSchema: z.ZodType<Prisma.BankFindManyArgs> = z.object({
   select: BankSelectSchema.optional(),
   include: BankIncludeSchema.optional(),
-  where: BankWhereInputSchema.optional(),
+  where: BankWhereInputSchema.optional(), 
   orderBy: z.union([ BankOrderByWithRelationInputSchema.array(), BankOrderByWithRelationInputSchema ]).optional(),
-  cursor: BankWhereUniqueInputSchema.optional(),
+  cursor: BankWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ BankScalarFieldEnumSchema, BankScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const BankAggregateArgsSchema: z.ZodType<Prisma.BankAggregateArgs> = z.object({
-  where: BankWhereInputSchema.optional(),
+  where: BankWhereInputSchema.optional(), 
   orderBy: z.union([ BankOrderByWithRelationInputSchema.array(), BankOrderByWithRelationInputSchema ]).optional(),
-  cursor: BankWhereUniqueInputSchema.optional(),
+  cursor: BankWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const BankGroupByArgsSchema: z.ZodType<Prisma.BankGroupByArgs> = z.object({
-  where: BankWhereInputSchema.optional(),
+  where: BankWhereInputSchema.optional(), 
   orderBy: z.union([ BankOrderByWithAggregationInputSchema.array(), BankOrderByWithAggregationInputSchema ]).optional(),
-  by: BankScalarFieldEnumSchema.array(),
-  having: BankScalarWhereWithAggregatesInputSchema.optional(),
+  by: BankScalarFieldEnumSchema.array(), 
+  having: BankScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35070,21 +37468,21 @@ export const BankGroupByArgsSchema: z.ZodType<Prisma.BankGroupByArgs> = z.object
 export const BankFindUniqueArgsSchema: z.ZodType<Prisma.BankFindUniqueArgs> = z.object({
   select: BankSelectSchema.optional(),
   include: BankIncludeSchema.optional(),
-  where: BankWhereUniqueInputSchema,
+  where: BankWhereUniqueInputSchema, 
 }).strict();
 
 export const BankFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.BankFindUniqueOrThrowArgs> = z.object({
   select: BankSelectSchema.optional(),
   include: BankIncludeSchema.optional(),
-  where: BankWhereUniqueInputSchema,
+  where: BankWhereUniqueInputSchema, 
 }).strict();
 
 export const TagihanDihapusFindFirstArgsSchema: z.ZodType<Prisma.TagihanDihapusFindFirstArgs> = z.object({
   select: TagihanDihapusSelectSchema.optional(),
   include: TagihanDihapusIncludeSchema.optional(),
-  where: TagihanDihapusWhereInputSchema.optional(),
+  where: TagihanDihapusWhereInputSchema.optional(), 
   orderBy: z.union([ TagihanDihapusOrderByWithRelationInputSchema.array(), TagihanDihapusOrderByWithRelationInputSchema ]).optional(),
-  cursor: TagihanDihapusWhereUniqueInputSchema.optional(),
+  cursor: TagihanDihapusWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ TagihanDihapusScalarFieldEnumSchema, TagihanDihapusScalarFieldEnumSchema.array() ]).optional(),
@@ -35093,9 +37491,9 @@ export const TagihanDihapusFindFirstArgsSchema: z.ZodType<Prisma.TagihanDihapusF
 export const TagihanDihapusFindFirstOrThrowArgsSchema: z.ZodType<Prisma.TagihanDihapusFindFirstOrThrowArgs> = z.object({
   select: TagihanDihapusSelectSchema.optional(),
   include: TagihanDihapusIncludeSchema.optional(),
-  where: TagihanDihapusWhereInputSchema.optional(),
+  where: TagihanDihapusWhereInputSchema.optional(), 
   orderBy: z.union([ TagihanDihapusOrderByWithRelationInputSchema.array(), TagihanDihapusOrderByWithRelationInputSchema ]).optional(),
-  cursor: TagihanDihapusWhereUniqueInputSchema.optional(),
+  cursor: TagihanDihapusWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ TagihanDihapusScalarFieldEnumSchema, TagihanDihapusScalarFieldEnumSchema.array() ]).optional(),
@@ -35104,27 +37502,27 @@ export const TagihanDihapusFindFirstOrThrowArgsSchema: z.ZodType<Prisma.TagihanD
 export const TagihanDihapusFindManyArgsSchema: z.ZodType<Prisma.TagihanDihapusFindManyArgs> = z.object({
   select: TagihanDihapusSelectSchema.optional(),
   include: TagihanDihapusIncludeSchema.optional(),
-  where: TagihanDihapusWhereInputSchema.optional(),
+  where: TagihanDihapusWhereInputSchema.optional(), 
   orderBy: z.union([ TagihanDihapusOrderByWithRelationInputSchema.array(), TagihanDihapusOrderByWithRelationInputSchema ]).optional(),
-  cursor: TagihanDihapusWhereUniqueInputSchema.optional(),
+  cursor: TagihanDihapusWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ TagihanDihapusScalarFieldEnumSchema, TagihanDihapusScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const TagihanDihapusAggregateArgsSchema: z.ZodType<Prisma.TagihanDihapusAggregateArgs> = z.object({
-  where: TagihanDihapusWhereInputSchema.optional(),
+  where: TagihanDihapusWhereInputSchema.optional(), 
   orderBy: z.union([ TagihanDihapusOrderByWithRelationInputSchema.array(), TagihanDihapusOrderByWithRelationInputSchema ]).optional(),
-  cursor: TagihanDihapusWhereUniqueInputSchema.optional(),
+  cursor: TagihanDihapusWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const TagihanDihapusGroupByArgsSchema: z.ZodType<Prisma.TagihanDihapusGroupByArgs> = z.object({
-  where: TagihanDihapusWhereInputSchema.optional(),
+  where: TagihanDihapusWhereInputSchema.optional(), 
   orderBy: z.union([ TagihanDihapusOrderByWithAggregationInputSchema.array(), TagihanDihapusOrderByWithAggregationInputSchema ]).optional(),
-  by: TagihanDihapusScalarFieldEnumSchema.array(),
-  having: TagihanDihapusScalarWhereWithAggregatesInputSchema.optional(),
+  by: TagihanDihapusScalarFieldEnumSchema.array(), 
+  having: TagihanDihapusScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35132,21 +37530,21 @@ export const TagihanDihapusGroupByArgsSchema: z.ZodType<Prisma.TagihanDihapusGro
 export const TagihanDihapusFindUniqueArgsSchema: z.ZodType<Prisma.TagihanDihapusFindUniqueArgs> = z.object({
   select: TagihanDihapusSelectSchema.optional(),
   include: TagihanDihapusIncludeSchema.optional(),
-  where: TagihanDihapusWhereUniqueInputSchema,
+  where: TagihanDihapusWhereUniqueInputSchema, 
 }).strict();
 
 export const TagihanDihapusFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.TagihanDihapusFindUniqueOrThrowArgs> = z.object({
   select: TagihanDihapusSelectSchema.optional(),
   include: TagihanDihapusIncludeSchema.optional(),
-  where: TagihanDihapusWhereUniqueInputSchema,
+  where: TagihanDihapusWhereUniqueInputSchema, 
 }).strict();
 
 export const PembayaranFindFirstArgsSchema: z.ZodType<Prisma.PembayaranFindFirstArgs> = z.object({
   select: PembayaranSelectSchema.optional(),
   include: PembayaranIncludeSchema.optional(),
-  where: PembayaranWhereInputSchema.optional(),
+  where: PembayaranWhereInputSchema.optional(), 
   orderBy: z.union([ PembayaranOrderByWithRelationInputSchema.array(), PembayaranOrderByWithRelationInputSchema ]).optional(),
-  cursor: PembayaranWhereUniqueInputSchema.optional(),
+  cursor: PembayaranWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PembayaranScalarFieldEnumSchema, PembayaranScalarFieldEnumSchema.array() ]).optional(),
@@ -35155,9 +37553,9 @@ export const PembayaranFindFirstArgsSchema: z.ZodType<Prisma.PembayaranFindFirst
 export const PembayaranFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PembayaranFindFirstOrThrowArgs> = z.object({
   select: PembayaranSelectSchema.optional(),
   include: PembayaranIncludeSchema.optional(),
-  where: PembayaranWhereInputSchema.optional(),
+  where: PembayaranWhereInputSchema.optional(), 
   orderBy: z.union([ PembayaranOrderByWithRelationInputSchema.array(), PembayaranOrderByWithRelationInputSchema ]).optional(),
-  cursor: PembayaranWhereUniqueInputSchema.optional(),
+  cursor: PembayaranWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PembayaranScalarFieldEnumSchema, PembayaranScalarFieldEnumSchema.array() ]).optional(),
@@ -35166,27 +37564,27 @@ export const PembayaranFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PembayaranFi
 export const PembayaranFindManyArgsSchema: z.ZodType<Prisma.PembayaranFindManyArgs> = z.object({
   select: PembayaranSelectSchema.optional(),
   include: PembayaranIncludeSchema.optional(),
-  where: PembayaranWhereInputSchema.optional(),
+  where: PembayaranWhereInputSchema.optional(), 
   orderBy: z.union([ PembayaranOrderByWithRelationInputSchema.array(), PembayaranOrderByWithRelationInputSchema ]).optional(),
-  cursor: PembayaranWhereUniqueInputSchema.optional(),
+  cursor: PembayaranWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PembayaranScalarFieldEnumSchema, PembayaranScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PembayaranAggregateArgsSchema: z.ZodType<Prisma.PembayaranAggregateArgs> = z.object({
-  where: PembayaranWhereInputSchema.optional(),
+  where: PembayaranWhereInputSchema.optional(), 
   orderBy: z.union([ PembayaranOrderByWithRelationInputSchema.array(), PembayaranOrderByWithRelationInputSchema ]).optional(),
-  cursor: PembayaranWhereUniqueInputSchema.optional(),
+  cursor: PembayaranWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PembayaranGroupByArgsSchema: z.ZodType<Prisma.PembayaranGroupByArgs> = z.object({
-  where: PembayaranWhereInputSchema.optional(),
+  where: PembayaranWhereInputSchema.optional(), 
   orderBy: z.union([ PembayaranOrderByWithAggregationInputSchema.array(), PembayaranOrderByWithAggregationInputSchema ]).optional(),
-  by: PembayaranScalarFieldEnumSchema.array(),
-  having: PembayaranScalarWhereWithAggregatesInputSchema.optional(),
+  by: PembayaranScalarFieldEnumSchema.array(), 
+  having: PembayaranScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35194,21 +37592,21 @@ export const PembayaranGroupByArgsSchema: z.ZodType<Prisma.PembayaranGroupByArgs
 export const PembayaranFindUniqueArgsSchema: z.ZodType<Prisma.PembayaranFindUniqueArgs> = z.object({
   select: PembayaranSelectSchema.optional(),
   include: PembayaranIncludeSchema.optional(),
-  where: PembayaranWhereUniqueInputSchema,
+  where: PembayaranWhereUniqueInputSchema, 
 }).strict();
 
 export const PembayaranFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PembayaranFindUniqueOrThrowArgs> = z.object({
   select: PembayaranSelectSchema.optional(),
   include: PembayaranIncludeSchema.optional(),
-  where: PembayaranWhereUniqueInputSchema,
+  where: PembayaranWhereUniqueInputSchema, 
 }).strict();
 
 export const LogBayarFindFirstArgsSchema: z.ZodType<Prisma.LogBayarFindFirstArgs> = z.object({
   select: LogBayarSelectSchema.optional(),
   include: LogBayarIncludeSchema.optional(),
-  where: LogBayarWhereInputSchema.optional(),
+  where: LogBayarWhereInputSchema.optional(), 
   orderBy: z.union([ LogBayarOrderByWithRelationInputSchema.array(), LogBayarOrderByWithRelationInputSchema ]).optional(),
-  cursor: LogBayarWhereUniqueInputSchema.optional(),
+  cursor: LogBayarWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ LogBayarScalarFieldEnumSchema, LogBayarScalarFieldEnumSchema.array() ]).optional(),
@@ -35217,9 +37615,9 @@ export const LogBayarFindFirstArgsSchema: z.ZodType<Prisma.LogBayarFindFirstArgs
 export const LogBayarFindFirstOrThrowArgsSchema: z.ZodType<Prisma.LogBayarFindFirstOrThrowArgs> = z.object({
   select: LogBayarSelectSchema.optional(),
   include: LogBayarIncludeSchema.optional(),
-  where: LogBayarWhereInputSchema.optional(),
+  where: LogBayarWhereInputSchema.optional(), 
   orderBy: z.union([ LogBayarOrderByWithRelationInputSchema.array(), LogBayarOrderByWithRelationInputSchema ]).optional(),
-  cursor: LogBayarWhereUniqueInputSchema.optional(),
+  cursor: LogBayarWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ LogBayarScalarFieldEnumSchema, LogBayarScalarFieldEnumSchema.array() ]).optional(),
@@ -35228,27 +37626,27 @@ export const LogBayarFindFirstOrThrowArgsSchema: z.ZodType<Prisma.LogBayarFindFi
 export const LogBayarFindManyArgsSchema: z.ZodType<Prisma.LogBayarFindManyArgs> = z.object({
   select: LogBayarSelectSchema.optional(),
   include: LogBayarIncludeSchema.optional(),
-  where: LogBayarWhereInputSchema.optional(),
+  where: LogBayarWhereInputSchema.optional(), 
   orderBy: z.union([ LogBayarOrderByWithRelationInputSchema.array(), LogBayarOrderByWithRelationInputSchema ]).optional(),
-  cursor: LogBayarWhereUniqueInputSchema.optional(),
+  cursor: LogBayarWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ LogBayarScalarFieldEnumSchema, LogBayarScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const LogBayarAggregateArgsSchema: z.ZodType<Prisma.LogBayarAggregateArgs> = z.object({
-  where: LogBayarWhereInputSchema.optional(),
+  where: LogBayarWhereInputSchema.optional(), 
   orderBy: z.union([ LogBayarOrderByWithRelationInputSchema.array(), LogBayarOrderByWithRelationInputSchema ]).optional(),
-  cursor: LogBayarWhereUniqueInputSchema.optional(),
+  cursor: LogBayarWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const LogBayarGroupByArgsSchema: z.ZodType<Prisma.LogBayarGroupByArgs> = z.object({
-  where: LogBayarWhereInputSchema.optional(),
+  where: LogBayarWhereInputSchema.optional(), 
   orderBy: z.union([ LogBayarOrderByWithAggregationInputSchema.array(), LogBayarOrderByWithAggregationInputSchema ]).optional(),
-  by: LogBayarScalarFieldEnumSchema.array(),
-  having: LogBayarScalarWhereWithAggregatesInputSchema.optional(),
+  by: LogBayarScalarFieldEnumSchema.array(), 
+  having: LogBayarScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35256,21 +37654,21 @@ export const LogBayarGroupByArgsSchema: z.ZodType<Prisma.LogBayarGroupByArgs> = 
 export const LogBayarFindUniqueArgsSchema: z.ZodType<Prisma.LogBayarFindUniqueArgs> = z.object({
   select: LogBayarSelectSchema.optional(),
   include: LogBayarIncludeSchema.optional(),
-  where: LogBayarWhereUniqueInputSchema,
+  where: LogBayarWhereUniqueInputSchema, 
 }).strict();
 
 export const LogBayarFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.LogBayarFindUniqueOrThrowArgs> = z.object({
   select: LogBayarSelectSchema.optional(),
   include: LogBayarIncludeSchema.optional(),
-  where: LogBayarWhereUniqueInputSchema,
+  where: LogBayarWhereUniqueInputSchema, 
 }).strict();
 
 export const PembayaranMitraFindFirstArgsSchema: z.ZodType<Prisma.PembayaranMitraFindFirstArgs> = z.object({
   select: PembayaranMitraSelectSchema.optional(),
   include: PembayaranMitraIncludeSchema.optional(),
-  where: PembayaranMitraWhereInputSchema.optional(),
+  where: PembayaranMitraWhereInputSchema.optional(), 
   orderBy: z.union([ PembayaranMitraOrderByWithRelationInputSchema.array(), PembayaranMitraOrderByWithRelationInputSchema ]).optional(),
-  cursor: PembayaranMitraWhereUniqueInputSchema.optional(),
+  cursor: PembayaranMitraWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PembayaranMitraScalarFieldEnumSchema, PembayaranMitraScalarFieldEnumSchema.array() ]).optional(),
@@ -35279,9 +37677,9 @@ export const PembayaranMitraFindFirstArgsSchema: z.ZodType<Prisma.PembayaranMitr
 export const PembayaranMitraFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PembayaranMitraFindFirstOrThrowArgs> = z.object({
   select: PembayaranMitraSelectSchema.optional(),
   include: PembayaranMitraIncludeSchema.optional(),
-  where: PembayaranMitraWhereInputSchema.optional(),
+  where: PembayaranMitraWhereInputSchema.optional(), 
   orderBy: z.union([ PembayaranMitraOrderByWithRelationInputSchema.array(), PembayaranMitraOrderByWithRelationInputSchema ]).optional(),
-  cursor: PembayaranMitraWhereUniqueInputSchema.optional(),
+  cursor: PembayaranMitraWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PembayaranMitraScalarFieldEnumSchema, PembayaranMitraScalarFieldEnumSchema.array() ]).optional(),
@@ -35290,27 +37688,27 @@ export const PembayaranMitraFindFirstOrThrowArgsSchema: z.ZodType<Prisma.Pembaya
 export const PembayaranMitraFindManyArgsSchema: z.ZodType<Prisma.PembayaranMitraFindManyArgs> = z.object({
   select: PembayaranMitraSelectSchema.optional(),
   include: PembayaranMitraIncludeSchema.optional(),
-  where: PembayaranMitraWhereInputSchema.optional(),
+  where: PembayaranMitraWhereInputSchema.optional(), 
   orderBy: z.union([ PembayaranMitraOrderByWithRelationInputSchema.array(), PembayaranMitraOrderByWithRelationInputSchema ]).optional(),
-  cursor: PembayaranMitraWhereUniqueInputSchema.optional(),
+  cursor: PembayaranMitraWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PembayaranMitraScalarFieldEnumSchema, PembayaranMitraScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PembayaranMitraAggregateArgsSchema: z.ZodType<Prisma.PembayaranMitraAggregateArgs> = z.object({
-  where: PembayaranMitraWhereInputSchema.optional(),
+  where: PembayaranMitraWhereInputSchema.optional(), 
   orderBy: z.union([ PembayaranMitraOrderByWithRelationInputSchema.array(), PembayaranMitraOrderByWithRelationInputSchema ]).optional(),
-  cursor: PembayaranMitraWhereUniqueInputSchema.optional(),
+  cursor: PembayaranMitraWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PembayaranMitraGroupByArgsSchema: z.ZodType<Prisma.PembayaranMitraGroupByArgs> = z.object({
-  where: PembayaranMitraWhereInputSchema.optional(),
+  where: PembayaranMitraWhereInputSchema.optional(), 
   orderBy: z.union([ PembayaranMitraOrderByWithAggregationInputSchema.array(), PembayaranMitraOrderByWithAggregationInputSchema ]).optional(),
-  by: PembayaranMitraScalarFieldEnumSchema.array(),
-  having: PembayaranMitraScalarWhereWithAggregatesInputSchema.optional(),
+  by: PembayaranMitraScalarFieldEnumSchema.array(), 
+  having: PembayaranMitraScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35318,21 +37716,21 @@ export const PembayaranMitraGroupByArgsSchema: z.ZodType<Prisma.PembayaranMitraG
 export const PembayaranMitraFindUniqueArgsSchema: z.ZodType<Prisma.PembayaranMitraFindUniqueArgs> = z.object({
   select: PembayaranMitraSelectSchema.optional(),
   include: PembayaranMitraIncludeSchema.optional(),
-  where: PembayaranMitraWhereUniqueInputSchema,
+  where: PembayaranMitraWhereUniqueInputSchema, 
 }).strict();
 
 export const PembayaranMitraFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PembayaranMitraFindUniqueOrThrowArgs> = z.object({
   select: PembayaranMitraSelectSchema.optional(),
   include: PembayaranMitraIncludeSchema.optional(),
-  where: PembayaranMitraWhereUniqueInputSchema,
+  where: PembayaranMitraWhereUniqueInputSchema, 
 }).strict();
 
 export const LogBayarMitraFindFirstArgsSchema: z.ZodType<Prisma.LogBayarMitraFindFirstArgs> = z.object({
   select: LogBayarMitraSelectSchema.optional(),
   include: LogBayarMitraIncludeSchema.optional(),
-  where: LogBayarMitraWhereInputSchema.optional(),
+  where: LogBayarMitraWhereInputSchema.optional(), 
   orderBy: z.union([ LogBayarMitraOrderByWithRelationInputSchema.array(), LogBayarMitraOrderByWithRelationInputSchema ]).optional(),
-  cursor: LogBayarMitraWhereUniqueInputSchema.optional(),
+  cursor: LogBayarMitraWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ LogBayarMitraScalarFieldEnumSchema, LogBayarMitraScalarFieldEnumSchema.array() ]).optional(),
@@ -35341,9 +37739,9 @@ export const LogBayarMitraFindFirstArgsSchema: z.ZodType<Prisma.LogBayarMitraFin
 export const LogBayarMitraFindFirstOrThrowArgsSchema: z.ZodType<Prisma.LogBayarMitraFindFirstOrThrowArgs> = z.object({
   select: LogBayarMitraSelectSchema.optional(),
   include: LogBayarMitraIncludeSchema.optional(),
-  where: LogBayarMitraWhereInputSchema.optional(),
+  where: LogBayarMitraWhereInputSchema.optional(), 
   orderBy: z.union([ LogBayarMitraOrderByWithRelationInputSchema.array(), LogBayarMitraOrderByWithRelationInputSchema ]).optional(),
-  cursor: LogBayarMitraWhereUniqueInputSchema.optional(),
+  cursor: LogBayarMitraWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ LogBayarMitraScalarFieldEnumSchema, LogBayarMitraScalarFieldEnumSchema.array() ]).optional(),
@@ -35352,27 +37750,27 @@ export const LogBayarMitraFindFirstOrThrowArgsSchema: z.ZodType<Prisma.LogBayarM
 export const LogBayarMitraFindManyArgsSchema: z.ZodType<Prisma.LogBayarMitraFindManyArgs> = z.object({
   select: LogBayarMitraSelectSchema.optional(),
   include: LogBayarMitraIncludeSchema.optional(),
-  where: LogBayarMitraWhereInputSchema.optional(),
+  where: LogBayarMitraWhereInputSchema.optional(), 
   orderBy: z.union([ LogBayarMitraOrderByWithRelationInputSchema.array(), LogBayarMitraOrderByWithRelationInputSchema ]).optional(),
-  cursor: LogBayarMitraWhereUniqueInputSchema.optional(),
+  cursor: LogBayarMitraWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ LogBayarMitraScalarFieldEnumSchema, LogBayarMitraScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const LogBayarMitraAggregateArgsSchema: z.ZodType<Prisma.LogBayarMitraAggregateArgs> = z.object({
-  where: LogBayarMitraWhereInputSchema.optional(),
+  where: LogBayarMitraWhereInputSchema.optional(), 
   orderBy: z.union([ LogBayarMitraOrderByWithRelationInputSchema.array(), LogBayarMitraOrderByWithRelationInputSchema ]).optional(),
-  cursor: LogBayarMitraWhereUniqueInputSchema.optional(),
+  cursor: LogBayarMitraWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const LogBayarMitraGroupByArgsSchema: z.ZodType<Prisma.LogBayarMitraGroupByArgs> = z.object({
-  where: LogBayarMitraWhereInputSchema.optional(),
+  where: LogBayarMitraWhereInputSchema.optional(), 
   orderBy: z.union([ LogBayarMitraOrderByWithAggregationInputSchema.array(), LogBayarMitraOrderByWithAggregationInputSchema ]).optional(),
-  by: LogBayarMitraScalarFieldEnumSchema.array(),
-  having: LogBayarMitraScalarWhereWithAggregatesInputSchema.optional(),
+  by: LogBayarMitraScalarFieldEnumSchema.array(), 
+  having: LogBayarMitraScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35380,21 +37778,21 @@ export const LogBayarMitraGroupByArgsSchema: z.ZodType<Prisma.LogBayarMitraGroup
 export const LogBayarMitraFindUniqueArgsSchema: z.ZodType<Prisma.LogBayarMitraFindUniqueArgs> = z.object({
   select: LogBayarMitraSelectSchema.optional(),
   include: LogBayarMitraIncludeSchema.optional(),
-  where: LogBayarMitraWhereUniqueInputSchema,
+  where: LogBayarMitraWhereUniqueInputSchema, 
 }).strict();
 
 export const LogBayarMitraFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.LogBayarMitraFindUniqueOrThrowArgs> = z.object({
   select: LogBayarMitraSelectSchema.optional(),
   include: LogBayarMitraIncludeSchema.optional(),
-  where: LogBayarMitraWhereUniqueInputSchema,
+  where: LogBayarMitraWhereUniqueInputSchema, 
 }).strict();
 
 export const ProvinceFindFirstArgsSchema: z.ZodType<Prisma.ProvinceFindFirstArgs> = z.object({
   select: ProvinceSelectSchema.optional(),
   include: ProvinceIncludeSchema.optional(),
-  where: ProvinceWhereInputSchema.optional(),
+  where: ProvinceWhereInputSchema.optional(), 
   orderBy: z.union([ ProvinceOrderByWithRelationInputSchema.array(), ProvinceOrderByWithRelationInputSchema ]).optional(),
-  cursor: ProvinceWhereUniqueInputSchema.optional(),
+  cursor: ProvinceWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ ProvinceScalarFieldEnumSchema, ProvinceScalarFieldEnumSchema.array() ]).optional(),
@@ -35403,9 +37801,9 @@ export const ProvinceFindFirstArgsSchema: z.ZodType<Prisma.ProvinceFindFirstArgs
 export const ProvinceFindFirstOrThrowArgsSchema: z.ZodType<Prisma.ProvinceFindFirstOrThrowArgs> = z.object({
   select: ProvinceSelectSchema.optional(),
   include: ProvinceIncludeSchema.optional(),
-  where: ProvinceWhereInputSchema.optional(),
+  where: ProvinceWhereInputSchema.optional(), 
   orderBy: z.union([ ProvinceOrderByWithRelationInputSchema.array(), ProvinceOrderByWithRelationInputSchema ]).optional(),
-  cursor: ProvinceWhereUniqueInputSchema.optional(),
+  cursor: ProvinceWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ ProvinceScalarFieldEnumSchema, ProvinceScalarFieldEnumSchema.array() ]).optional(),
@@ -35414,27 +37812,27 @@ export const ProvinceFindFirstOrThrowArgsSchema: z.ZodType<Prisma.ProvinceFindFi
 export const ProvinceFindManyArgsSchema: z.ZodType<Prisma.ProvinceFindManyArgs> = z.object({
   select: ProvinceSelectSchema.optional(),
   include: ProvinceIncludeSchema.optional(),
-  where: ProvinceWhereInputSchema.optional(),
+  where: ProvinceWhereInputSchema.optional(), 
   orderBy: z.union([ ProvinceOrderByWithRelationInputSchema.array(), ProvinceOrderByWithRelationInputSchema ]).optional(),
-  cursor: ProvinceWhereUniqueInputSchema.optional(),
+  cursor: ProvinceWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ ProvinceScalarFieldEnumSchema, ProvinceScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const ProvinceAggregateArgsSchema: z.ZodType<Prisma.ProvinceAggregateArgs> = z.object({
-  where: ProvinceWhereInputSchema.optional(),
+  where: ProvinceWhereInputSchema.optional(), 
   orderBy: z.union([ ProvinceOrderByWithRelationInputSchema.array(), ProvinceOrderByWithRelationInputSchema ]).optional(),
-  cursor: ProvinceWhereUniqueInputSchema.optional(),
+  cursor: ProvinceWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const ProvinceGroupByArgsSchema: z.ZodType<Prisma.ProvinceGroupByArgs> = z.object({
-  where: ProvinceWhereInputSchema.optional(),
+  where: ProvinceWhereInputSchema.optional(), 
   orderBy: z.union([ ProvinceOrderByWithAggregationInputSchema.array(), ProvinceOrderByWithAggregationInputSchema ]).optional(),
-  by: ProvinceScalarFieldEnumSchema.array(),
-  having: ProvinceScalarWhereWithAggregatesInputSchema.optional(),
+  by: ProvinceScalarFieldEnumSchema.array(), 
+  having: ProvinceScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35442,21 +37840,21 @@ export const ProvinceGroupByArgsSchema: z.ZodType<Prisma.ProvinceGroupByArgs> = 
 export const ProvinceFindUniqueArgsSchema: z.ZodType<Prisma.ProvinceFindUniqueArgs> = z.object({
   select: ProvinceSelectSchema.optional(),
   include: ProvinceIncludeSchema.optional(),
-  where: ProvinceWhereUniqueInputSchema,
+  where: ProvinceWhereUniqueInputSchema, 
 }).strict();
 
 export const ProvinceFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.ProvinceFindUniqueOrThrowArgs> = z.object({
   select: ProvinceSelectSchema.optional(),
   include: ProvinceIncludeSchema.optional(),
-  where: ProvinceWhereUniqueInputSchema,
+  where: ProvinceWhereUniqueInputSchema, 
 }).strict();
 
 export const RegencyFindFirstArgsSchema: z.ZodType<Prisma.RegencyFindFirstArgs> = z.object({
   select: RegencySelectSchema.optional(),
   include: RegencyIncludeSchema.optional(),
-  where: RegencyWhereInputSchema.optional(),
+  where: RegencyWhereInputSchema.optional(), 
   orderBy: z.union([ RegencyOrderByWithRelationInputSchema.array(), RegencyOrderByWithRelationInputSchema ]).optional(),
-  cursor: RegencyWhereUniqueInputSchema.optional(),
+  cursor: RegencyWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ RegencyScalarFieldEnumSchema, RegencyScalarFieldEnumSchema.array() ]).optional(),
@@ -35465,9 +37863,9 @@ export const RegencyFindFirstArgsSchema: z.ZodType<Prisma.RegencyFindFirstArgs> 
 export const RegencyFindFirstOrThrowArgsSchema: z.ZodType<Prisma.RegencyFindFirstOrThrowArgs> = z.object({
   select: RegencySelectSchema.optional(),
   include: RegencyIncludeSchema.optional(),
-  where: RegencyWhereInputSchema.optional(),
+  where: RegencyWhereInputSchema.optional(), 
   orderBy: z.union([ RegencyOrderByWithRelationInputSchema.array(), RegencyOrderByWithRelationInputSchema ]).optional(),
-  cursor: RegencyWhereUniqueInputSchema.optional(),
+  cursor: RegencyWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ RegencyScalarFieldEnumSchema, RegencyScalarFieldEnumSchema.array() ]).optional(),
@@ -35476,27 +37874,27 @@ export const RegencyFindFirstOrThrowArgsSchema: z.ZodType<Prisma.RegencyFindFirs
 export const RegencyFindManyArgsSchema: z.ZodType<Prisma.RegencyFindManyArgs> = z.object({
   select: RegencySelectSchema.optional(),
   include: RegencyIncludeSchema.optional(),
-  where: RegencyWhereInputSchema.optional(),
+  where: RegencyWhereInputSchema.optional(), 
   orderBy: z.union([ RegencyOrderByWithRelationInputSchema.array(), RegencyOrderByWithRelationInputSchema ]).optional(),
-  cursor: RegencyWhereUniqueInputSchema.optional(),
+  cursor: RegencyWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ RegencyScalarFieldEnumSchema, RegencyScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const RegencyAggregateArgsSchema: z.ZodType<Prisma.RegencyAggregateArgs> = z.object({
-  where: RegencyWhereInputSchema.optional(),
+  where: RegencyWhereInputSchema.optional(), 
   orderBy: z.union([ RegencyOrderByWithRelationInputSchema.array(), RegencyOrderByWithRelationInputSchema ]).optional(),
-  cursor: RegencyWhereUniqueInputSchema.optional(),
+  cursor: RegencyWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const RegencyGroupByArgsSchema: z.ZodType<Prisma.RegencyGroupByArgs> = z.object({
-  where: RegencyWhereInputSchema.optional(),
+  where: RegencyWhereInputSchema.optional(), 
   orderBy: z.union([ RegencyOrderByWithAggregationInputSchema.array(), RegencyOrderByWithAggregationInputSchema ]).optional(),
-  by: RegencyScalarFieldEnumSchema.array(),
-  having: RegencyScalarWhereWithAggregatesInputSchema.optional(),
+  by: RegencyScalarFieldEnumSchema.array(), 
+  having: RegencyScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35504,21 +37902,21 @@ export const RegencyGroupByArgsSchema: z.ZodType<Prisma.RegencyGroupByArgs> = z.
 export const RegencyFindUniqueArgsSchema: z.ZodType<Prisma.RegencyFindUniqueArgs> = z.object({
   select: RegencySelectSchema.optional(),
   include: RegencyIncludeSchema.optional(),
-  where: RegencyWhereUniqueInputSchema,
+  where: RegencyWhereUniqueInputSchema, 
 }).strict();
 
 export const RegencyFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.RegencyFindUniqueOrThrowArgs> = z.object({
   select: RegencySelectSchema.optional(),
   include: RegencyIncludeSchema.optional(),
-  where: RegencyWhereUniqueInputSchema,
+  where: RegencyWhereUniqueInputSchema, 
 }).strict();
 
 export const KodeposFindFirstArgsSchema: z.ZodType<Prisma.KodeposFindFirstArgs> = z.object({
   select: KodeposSelectSchema.optional(),
   include: KodeposIncludeSchema.optional(),
-  where: KodeposWhereInputSchema.optional(),
+  where: KodeposWhereInputSchema.optional(), 
   orderBy: z.union([ KodeposOrderByWithRelationInputSchema.array(), KodeposOrderByWithRelationInputSchema ]).optional(),
-  cursor: KodeposWhereUniqueInputSchema.optional(),
+  cursor: KodeposWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ KodeposScalarFieldEnumSchema, KodeposScalarFieldEnumSchema.array() ]).optional(),
@@ -35527,9 +37925,9 @@ export const KodeposFindFirstArgsSchema: z.ZodType<Prisma.KodeposFindFirstArgs> 
 export const KodeposFindFirstOrThrowArgsSchema: z.ZodType<Prisma.KodeposFindFirstOrThrowArgs> = z.object({
   select: KodeposSelectSchema.optional(),
   include: KodeposIncludeSchema.optional(),
-  where: KodeposWhereInputSchema.optional(),
+  where: KodeposWhereInputSchema.optional(), 
   orderBy: z.union([ KodeposOrderByWithRelationInputSchema.array(), KodeposOrderByWithRelationInputSchema ]).optional(),
-  cursor: KodeposWhereUniqueInputSchema.optional(),
+  cursor: KodeposWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ KodeposScalarFieldEnumSchema, KodeposScalarFieldEnumSchema.array() ]).optional(),
@@ -35538,27 +37936,27 @@ export const KodeposFindFirstOrThrowArgsSchema: z.ZodType<Prisma.KodeposFindFirs
 export const KodeposFindManyArgsSchema: z.ZodType<Prisma.KodeposFindManyArgs> = z.object({
   select: KodeposSelectSchema.optional(),
   include: KodeposIncludeSchema.optional(),
-  where: KodeposWhereInputSchema.optional(),
+  where: KodeposWhereInputSchema.optional(), 
   orderBy: z.union([ KodeposOrderByWithRelationInputSchema.array(), KodeposOrderByWithRelationInputSchema ]).optional(),
-  cursor: KodeposWhereUniqueInputSchema.optional(),
+  cursor: KodeposWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ KodeposScalarFieldEnumSchema, KodeposScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const KodeposAggregateArgsSchema: z.ZodType<Prisma.KodeposAggregateArgs> = z.object({
-  where: KodeposWhereInputSchema.optional(),
+  where: KodeposWhereInputSchema.optional(), 
   orderBy: z.union([ KodeposOrderByWithRelationInputSchema.array(), KodeposOrderByWithRelationInputSchema ]).optional(),
-  cursor: KodeposWhereUniqueInputSchema.optional(),
+  cursor: KodeposWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const KodeposGroupByArgsSchema: z.ZodType<Prisma.KodeposGroupByArgs> = z.object({
-  where: KodeposWhereInputSchema.optional(),
+  where: KodeposWhereInputSchema.optional(), 
   orderBy: z.union([ KodeposOrderByWithAggregationInputSchema.array(), KodeposOrderByWithAggregationInputSchema ]).optional(),
-  by: KodeposScalarFieldEnumSchema.array(),
-  having: KodeposScalarWhereWithAggregatesInputSchema.optional(),
+  by: KodeposScalarFieldEnumSchema.array(), 
+  having: KodeposScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35566,21 +37964,21 @@ export const KodeposGroupByArgsSchema: z.ZodType<Prisma.KodeposGroupByArgs> = z.
 export const KodeposFindUniqueArgsSchema: z.ZodType<Prisma.KodeposFindUniqueArgs> = z.object({
   select: KodeposSelectSchema.optional(),
   include: KodeposIncludeSchema.optional(),
-  where: KodeposWhereUniqueInputSchema,
+  where: KodeposWhereUniqueInputSchema, 
 }).strict();
 
 export const KodeposFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.KodeposFindUniqueOrThrowArgs> = z.object({
   select: KodeposSelectSchema.optional(),
   include: KodeposIncludeSchema.optional(),
-  where: KodeposWhereUniqueInputSchema,
+  where: KodeposWhereUniqueInputSchema, 
 }).strict();
 
 export const PengeluaranFindFirstArgsSchema: z.ZodType<Prisma.PengeluaranFindFirstArgs> = z.object({
   select: PengeluaranSelectSchema.optional(),
   include: PengeluaranIncludeSchema.optional(),
-  where: PengeluaranWhereInputSchema.optional(),
+  where: PengeluaranWhereInputSchema.optional(), 
   orderBy: z.union([ PengeluaranOrderByWithRelationInputSchema.array(), PengeluaranOrderByWithRelationInputSchema ]).optional(),
-  cursor: PengeluaranWhereUniqueInputSchema.optional(),
+  cursor: PengeluaranWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PengeluaranScalarFieldEnumSchema, PengeluaranScalarFieldEnumSchema.array() ]).optional(),
@@ -35589,9 +37987,9 @@ export const PengeluaranFindFirstArgsSchema: z.ZodType<Prisma.PengeluaranFindFir
 export const PengeluaranFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PengeluaranFindFirstOrThrowArgs> = z.object({
   select: PengeluaranSelectSchema.optional(),
   include: PengeluaranIncludeSchema.optional(),
-  where: PengeluaranWhereInputSchema.optional(),
+  where: PengeluaranWhereInputSchema.optional(), 
   orderBy: z.union([ PengeluaranOrderByWithRelationInputSchema.array(), PengeluaranOrderByWithRelationInputSchema ]).optional(),
-  cursor: PengeluaranWhereUniqueInputSchema.optional(),
+  cursor: PengeluaranWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PengeluaranScalarFieldEnumSchema, PengeluaranScalarFieldEnumSchema.array() ]).optional(),
@@ -35600,27 +37998,27 @@ export const PengeluaranFindFirstOrThrowArgsSchema: z.ZodType<Prisma.Pengeluaran
 export const PengeluaranFindManyArgsSchema: z.ZodType<Prisma.PengeluaranFindManyArgs> = z.object({
   select: PengeluaranSelectSchema.optional(),
   include: PengeluaranIncludeSchema.optional(),
-  where: PengeluaranWhereInputSchema.optional(),
+  where: PengeluaranWhereInputSchema.optional(), 
   orderBy: z.union([ PengeluaranOrderByWithRelationInputSchema.array(), PengeluaranOrderByWithRelationInputSchema ]).optional(),
-  cursor: PengeluaranWhereUniqueInputSchema.optional(),
+  cursor: PengeluaranWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PengeluaranScalarFieldEnumSchema, PengeluaranScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PengeluaranAggregateArgsSchema: z.ZodType<Prisma.PengeluaranAggregateArgs> = z.object({
-  where: PengeluaranWhereInputSchema.optional(),
+  where: PengeluaranWhereInputSchema.optional(), 
   orderBy: z.union([ PengeluaranOrderByWithRelationInputSchema.array(), PengeluaranOrderByWithRelationInputSchema ]).optional(),
-  cursor: PengeluaranWhereUniqueInputSchema.optional(),
+  cursor: PengeluaranWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PengeluaranGroupByArgsSchema: z.ZodType<Prisma.PengeluaranGroupByArgs> = z.object({
-  where: PengeluaranWhereInputSchema.optional(),
+  where: PengeluaranWhereInputSchema.optional(), 
   orderBy: z.union([ PengeluaranOrderByWithAggregationInputSchema.array(), PengeluaranOrderByWithAggregationInputSchema ]).optional(),
-  by: PengeluaranScalarFieldEnumSchema.array(),
-  having: PengeluaranScalarWhereWithAggregatesInputSchema.optional(),
+  by: PengeluaranScalarFieldEnumSchema.array(), 
+  having: PengeluaranScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35628,21 +38026,21 @@ export const PengeluaranGroupByArgsSchema: z.ZodType<Prisma.PengeluaranGroupByAr
 export const PengeluaranFindUniqueArgsSchema: z.ZodType<Prisma.PengeluaranFindUniqueArgs> = z.object({
   select: PengeluaranSelectSchema.optional(),
   include: PengeluaranIncludeSchema.optional(),
-  where: PengeluaranWhereUniqueInputSchema,
+  where: PengeluaranWhereUniqueInputSchema, 
 }).strict();
 
 export const PengeluaranFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PengeluaranFindUniqueOrThrowArgs> = z.object({
   select: PengeluaranSelectSchema.optional(),
   include: PengeluaranIncludeSchema.optional(),
-  where: PengeluaranWhereUniqueInputSchema,
+  where: PengeluaranWhereUniqueInputSchema, 
 }).strict();
 
 export const RegulatorySettingsFindFirstArgsSchema: z.ZodType<Prisma.RegulatorySettingsFindFirstArgs> = z.object({
   select: RegulatorySettingsSelectSchema.optional(),
   include: RegulatorySettingsIncludeSchema.optional(),
-  where: RegulatorySettingsWhereInputSchema.optional(),
+  where: RegulatorySettingsWhereInputSchema.optional(), 
   orderBy: z.union([ RegulatorySettingsOrderByWithRelationInputSchema.array(), RegulatorySettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: RegulatorySettingsWhereUniqueInputSchema.optional(),
+  cursor: RegulatorySettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ RegulatorySettingsScalarFieldEnumSchema, RegulatorySettingsScalarFieldEnumSchema.array() ]).optional(),
@@ -35651,9 +38049,9 @@ export const RegulatorySettingsFindFirstArgsSchema: z.ZodType<Prisma.RegulatoryS
 export const RegulatorySettingsFindFirstOrThrowArgsSchema: z.ZodType<Prisma.RegulatorySettingsFindFirstOrThrowArgs> = z.object({
   select: RegulatorySettingsSelectSchema.optional(),
   include: RegulatorySettingsIncludeSchema.optional(),
-  where: RegulatorySettingsWhereInputSchema.optional(),
+  where: RegulatorySettingsWhereInputSchema.optional(), 
   orderBy: z.union([ RegulatorySettingsOrderByWithRelationInputSchema.array(), RegulatorySettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: RegulatorySettingsWhereUniqueInputSchema.optional(),
+  cursor: RegulatorySettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ RegulatorySettingsScalarFieldEnumSchema, RegulatorySettingsScalarFieldEnumSchema.array() ]).optional(),
@@ -35662,27 +38060,27 @@ export const RegulatorySettingsFindFirstOrThrowArgsSchema: z.ZodType<Prisma.Regu
 export const RegulatorySettingsFindManyArgsSchema: z.ZodType<Prisma.RegulatorySettingsFindManyArgs> = z.object({
   select: RegulatorySettingsSelectSchema.optional(),
   include: RegulatorySettingsIncludeSchema.optional(),
-  where: RegulatorySettingsWhereInputSchema.optional(),
+  where: RegulatorySettingsWhereInputSchema.optional(), 
   orderBy: z.union([ RegulatorySettingsOrderByWithRelationInputSchema.array(), RegulatorySettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: RegulatorySettingsWhereUniqueInputSchema.optional(),
+  cursor: RegulatorySettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ RegulatorySettingsScalarFieldEnumSchema, RegulatorySettingsScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const RegulatorySettingsAggregateArgsSchema: z.ZodType<Prisma.RegulatorySettingsAggregateArgs> = z.object({
-  where: RegulatorySettingsWhereInputSchema.optional(),
+  where: RegulatorySettingsWhereInputSchema.optional(), 
   orderBy: z.union([ RegulatorySettingsOrderByWithRelationInputSchema.array(), RegulatorySettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: RegulatorySettingsWhereUniqueInputSchema.optional(),
+  cursor: RegulatorySettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const RegulatorySettingsGroupByArgsSchema: z.ZodType<Prisma.RegulatorySettingsGroupByArgs> = z.object({
-  where: RegulatorySettingsWhereInputSchema.optional(),
+  where: RegulatorySettingsWhereInputSchema.optional(), 
   orderBy: z.union([ RegulatorySettingsOrderByWithAggregationInputSchema.array(), RegulatorySettingsOrderByWithAggregationInputSchema ]).optional(),
-  by: RegulatorySettingsScalarFieldEnumSchema.array(),
-  having: RegulatorySettingsScalarWhereWithAggregatesInputSchema.optional(),
+  by: RegulatorySettingsScalarFieldEnumSchema.array(), 
+  having: RegulatorySettingsScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35690,21 +38088,21 @@ export const RegulatorySettingsGroupByArgsSchema: z.ZodType<Prisma.RegulatorySet
 export const RegulatorySettingsFindUniqueArgsSchema: z.ZodType<Prisma.RegulatorySettingsFindUniqueArgs> = z.object({
   select: RegulatorySettingsSelectSchema.optional(),
   include: RegulatorySettingsIncludeSchema.optional(),
-  where: RegulatorySettingsWhereUniqueInputSchema,
+  where: RegulatorySettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const RegulatorySettingsFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.RegulatorySettingsFindUniqueOrThrowArgs> = z.object({
   select: RegulatorySettingsSelectSchema.optional(),
   include: RegulatorySettingsIncludeSchema.optional(),
-  where: RegulatorySettingsWhereUniqueInputSchema,
+  where: RegulatorySettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const RegulatoryReportFindFirstArgsSchema: z.ZodType<Prisma.RegulatoryReportFindFirstArgs> = z.object({
   select: RegulatoryReportSelectSchema.optional(),
   include: RegulatoryReportIncludeSchema.optional(),
-  where: RegulatoryReportWhereInputSchema.optional(),
+  where: RegulatoryReportWhereInputSchema.optional(), 
   orderBy: z.union([ RegulatoryReportOrderByWithRelationInputSchema.array(), RegulatoryReportOrderByWithRelationInputSchema ]).optional(),
-  cursor: RegulatoryReportWhereUniqueInputSchema.optional(),
+  cursor: RegulatoryReportWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ RegulatoryReportScalarFieldEnumSchema, RegulatoryReportScalarFieldEnumSchema.array() ]).optional(),
@@ -35713,9 +38111,9 @@ export const RegulatoryReportFindFirstArgsSchema: z.ZodType<Prisma.RegulatoryRep
 export const RegulatoryReportFindFirstOrThrowArgsSchema: z.ZodType<Prisma.RegulatoryReportFindFirstOrThrowArgs> = z.object({
   select: RegulatoryReportSelectSchema.optional(),
   include: RegulatoryReportIncludeSchema.optional(),
-  where: RegulatoryReportWhereInputSchema.optional(),
+  where: RegulatoryReportWhereInputSchema.optional(), 
   orderBy: z.union([ RegulatoryReportOrderByWithRelationInputSchema.array(), RegulatoryReportOrderByWithRelationInputSchema ]).optional(),
-  cursor: RegulatoryReportWhereUniqueInputSchema.optional(),
+  cursor: RegulatoryReportWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ RegulatoryReportScalarFieldEnumSchema, RegulatoryReportScalarFieldEnumSchema.array() ]).optional(),
@@ -35724,27 +38122,27 @@ export const RegulatoryReportFindFirstOrThrowArgsSchema: z.ZodType<Prisma.Regula
 export const RegulatoryReportFindManyArgsSchema: z.ZodType<Prisma.RegulatoryReportFindManyArgs> = z.object({
   select: RegulatoryReportSelectSchema.optional(),
   include: RegulatoryReportIncludeSchema.optional(),
-  where: RegulatoryReportWhereInputSchema.optional(),
+  where: RegulatoryReportWhereInputSchema.optional(), 
   orderBy: z.union([ RegulatoryReportOrderByWithRelationInputSchema.array(), RegulatoryReportOrderByWithRelationInputSchema ]).optional(),
-  cursor: RegulatoryReportWhereUniqueInputSchema.optional(),
+  cursor: RegulatoryReportWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ RegulatoryReportScalarFieldEnumSchema, RegulatoryReportScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const RegulatoryReportAggregateArgsSchema: z.ZodType<Prisma.RegulatoryReportAggregateArgs> = z.object({
-  where: RegulatoryReportWhereInputSchema.optional(),
+  where: RegulatoryReportWhereInputSchema.optional(), 
   orderBy: z.union([ RegulatoryReportOrderByWithRelationInputSchema.array(), RegulatoryReportOrderByWithRelationInputSchema ]).optional(),
-  cursor: RegulatoryReportWhereUniqueInputSchema.optional(),
+  cursor: RegulatoryReportWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const RegulatoryReportGroupByArgsSchema: z.ZodType<Prisma.RegulatoryReportGroupByArgs> = z.object({
-  where: RegulatoryReportWhereInputSchema.optional(),
+  where: RegulatoryReportWhereInputSchema.optional(), 
   orderBy: z.union([ RegulatoryReportOrderByWithAggregationInputSchema.array(), RegulatoryReportOrderByWithAggregationInputSchema ]).optional(),
-  by: RegulatoryReportScalarFieldEnumSchema.array(),
-  having: RegulatoryReportScalarWhereWithAggregatesInputSchema.optional(),
+  by: RegulatoryReportScalarFieldEnumSchema.array(), 
+  having: RegulatoryReportScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35752,21 +38150,21 @@ export const RegulatoryReportGroupByArgsSchema: z.ZodType<Prisma.RegulatoryRepor
 export const RegulatoryReportFindUniqueArgsSchema: z.ZodType<Prisma.RegulatoryReportFindUniqueArgs> = z.object({
   select: RegulatoryReportSelectSchema.optional(),
   include: RegulatoryReportIncludeSchema.optional(),
-  where: RegulatoryReportWhereUniqueInputSchema,
+  where: RegulatoryReportWhereUniqueInputSchema, 
 }).strict();
 
 export const RegulatoryReportFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.RegulatoryReportFindUniqueOrThrowArgs> = z.object({
   select: RegulatoryReportSelectSchema.optional(),
   include: RegulatoryReportIncludeSchema.optional(),
-  where: RegulatoryReportWhereUniqueInputSchema,
+  where: RegulatoryReportWhereUniqueInputSchema, 
 }).strict();
 
 export const PelangganStatusLogFindFirstArgsSchema: z.ZodType<Prisma.PelangganStatusLogFindFirstArgs> = z.object({
   select: PelangganStatusLogSelectSchema.optional(),
   include: PelangganStatusLogIncludeSchema.optional(),
-  where: PelangganStatusLogWhereInputSchema.optional(),
+  where: PelangganStatusLogWhereInputSchema.optional(), 
   orderBy: z.union([ PelangganStatusLogOrderByWithRelationInputSchema.array(), PelangganStatusLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: PelangganStatusLogWhereUniqueInputSchema.optional(),
+  cursor: PelangganStatusLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PelangganStatusLogScalarFieldEnumSchema, PelangganStatusLogScalarFieldEnumSchema.array() ]).optional(),
@@ -35775,9 +38173,9 @@ export const PelangganStatusLogFindFirstArgsSchema: z.ZodType<Prisma.PelangganSt
 export const PelangganStatusLogFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PelangganStatusLogFindFirstOrThrowArgs> = z.object({
   select: PelangganStatusLogSelectSchema.optional(),
   include: PelangganStatusLogIncludeSchema.optional(),
-  where: PelangganStatusLogWhereInputSchema.optional(),
+  where: PelangganStatusLogWhereInputSchema.optional(), 
   orderBy: z.union([ PelangganStatusLogOrderByWithRelationInputSchema.array(), PelangganStatusLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: PelangganStatusLogWhereUniqueInputSchema.optional(),
+  cursor: PelangganStatusLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PelangganStatusLogScalarFieldEnumSchema, PelangganStatusLogScalarFieldEnumSchema.array() ]).optional(),
@@ -35786,27 +38184,27 @@ export const PelangganStatusLogFindFirstOrThrowArgsSchema: z.ZodType<Prisma.Pela
 export const PelangganStatusLogFindManyArgsSchema: z.ZodType<Prisma.PelangganStatusLogFindManyArgs> = z.object({
   select: PelangganStatusLogSelectSchema.optional(),
   include: PelangganStatusLogIncludeSchema.optional(),
-  where: PelangganStatusLogWhereInputSchema.optional(),
+  where: PelangganStatusLogWhereInputSchema.optional(), 
   orderBy: z.union([ PelangganStatusLogOrderByWithRelationInputSchema.array(), PelangganStatusLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: PelangganStatusLogWhereUniqueInputSchema.optional(),
+  cursor: PelangganStatusLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PelangganStatusLogScalarFieldEnumSchema, PelangganStatusLogScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PelangganStatusLogAggregateArgsSchema: z.ZodType<Prisma.PelangganStatusLogAggregateArgs> = z.object({
-  where: PelangganStatusLogWhereInputSchema.optional(),
+  where: PelangganStatusLogWhereInputSchema.optional(), 
   orderBy: z.union([ PelangganStatusLogOrderByWithRelationInputSchema.array(), PelangganStatusLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: PelangganStatusLogWhereUniqueInputSchema.optional(),
+  cursor: PelangganStatusLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PelangganStatusLogGroupByArgsSchema: z.ZodType<Prisma.PelangganStatusLogGroupByArgs> = z.object({
-  where: PelangganStatusLogWhereInputSchema.optional(),
+  where: PelangganStatusLogWhereInputSchema.optional(), 
   orderBy: z.union([ PelangganStatusLogOrderByWithAggregationInputSchema.array(), PelangganStatusLogOrderByWithAggregationInputSchema ]).optional(),
-  by: PelangganStatusLogScalarFieldEnumSchema.array(),
-  having: PelangganStatusLogScalarWhereWithAggregatesInputSchema.optional(),
+  by: PelangganStatusLogScalarFieldEnumSchema.array(), 
+  having: PelangganStatusLogScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35814,21 +38212,21 @@ export const PelangganStatusLogGroupByArgsSchema: z.ZodType<Prisma.PelangganStat
 export const PelangganStatusLogFindUniqueArgsSchema: z.ZodType<Prisma.PelangganStatusLogFindUniqueArgs> = z.object({
   select: PelangganStatusLogSelectSchema.optional(),
   include: PelangganStatusLogIncludeSchema.optional(),
-  where: PelangganStatusLogWhereUniqueInputSchema,
+  where: PelangganStatusLogWhereUniqueInputSchema, 
 }).strict();
 
 export const PelangganStatusLogFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PelangganStatusLogFindUniqueOrThrowArgs> = z.object({
   select: PelangganStatusLogSelectSchema.optional(),
   include: PelangganStatusLogIncludeSchema.optional(),
-  where: PelangganStatusLogWhereUniqueInputSchema,
+  where: PelangganStatusLogWhereUniqueInputSchema, 
 }).strict();
 
 export const PortalTiketFindFirstArgsSchema: z.ZodType<Prisma.PortalTiketFindFirstArgs> = z.object({
   select: PortalTiketSelectSchema.optional(),
   include: PortalTiketIncludeSchema.optional(),
-  where: PortalTiketWhereInputSchema.optional(),
+  where: PortalTiketWhereInputSchema.optional(), 
   orderBy: z.union([ PortalTiketOrderByWithRelationInputSchema.array(), PortalTiketOrderByWithRelationInputSchema ]).optional(),
-  cursor: PortalTiketWhereUniqueInputSchema.optional(),
+  cursor: PortalTiketWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PortalTiketScalarFieldEnumSchema, PortalTiketScalarFieldEnumSchema.array() ]).optional(),
@@ -35837,9 +38235,9 @@ export const PortalTiketFindFirstArgsSchema: z.ZodType<Prisma.PortalTiketFindFir
 export const PortalTiketFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PortalTiketFindFirstOrThrowArgs> = z.object({
   select: PortalTiketSelectSchema.optional(),
   include: PortalTiketIncludeSchema.optional(),
-  where: PortalTiketWhereInputSchema.optional(),
+  where: PortalTiketWhereInputSchema.optional(), 
   orderBy: z.union([ PortalTiketOrderByWithRelationInputSchema.array(), PortalTiketOrderByWithRelationInputSchema ]).optional(),
-  cursor: PortalTiketWhereUniqueInputSchema.optional(),
+  cursor: PortalTiketWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PortalTiketScalarFieldEnumSchema, PortalTiketScalarFieldEnumSchema.array() ]).optional(),
@@ -35848,27 +38246,27 @@ export const PortalTiketFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PortalTiket
 export const PortalTiketFindManyArgsSchema: z.ZodType<Prisma.PortalTiketFindManyArgs> = z.object({
   select: PortalTiketSelectSchema.optional(),
   include: PortalTiketIncludeSchema.optional(),
-  where: PortalTiketWhereInputSchema.optional(),
+  where: PortalTiketWhereInputSchema.optional(), 
   orderBy: z.union([ PortalTiketOrderByWithRelationInputSchema.array(), PortalTiketOrderByWithRelationInputSchema ]).optional(),
-  cursor: PortalTiketWhereUniqueInputSchema.optional(),
+  cursor: PortalTiketWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PortalTiketScalarFieldEnumSchema, PortalTiketScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PortalTiketAggregateArgsSchema: z.ZodType<Prisma.PortalTiketAggregateArgs> = z.object({
-  where: PortalTiketWhereInputSchema.optional(),
+  where: PortalTiketWhereInputSchema.optional(), 
   orderBy: z.union([ PortalTiketOrderByWithRelationInputSchema.array(), PortalTiketOrderByWithRelationInputSchema ]).optional(),
-  cursor: PortalTiketWhereUniqueInputSchema.optional(),
+  cursor: PortalTiketWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PortalTiketGroupByArgsSchema: z.ZodType<Prisma.PortalTiketGroupByArgs> = z.object({
-  where: PortalTiketWhereInputSchema.optional(),
+  where: PortalTiketWhereInputSchema.optional(), 
   orderBy: z.union([ PortalTiketOrderByWithAggregationInputSchema.array(), PortalTiketOrderByWithAggregationInputSchema ]).optional(),
-  by: PortalTiketScalarFieldEnumSchema.array(),
-  having: PortalTiketScalarWhereWithAggregatesInputSchema.optional(),
+  by: PortalTiketScalarFieldEnumSchema.array(), 
+  having: PortalTiketScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35876,21 +38274,21 @@ export const PortalTiketGroupByArgsSchema: z.ZodType<Prisma.PortalTiketGroupByAr
 export const PortalTiketFindUniqueArgsSchema: z.ZodType<Prisma.PortalTiketFindUniqueArgs> = z.object({
   select: PortalTiketSelectSchema.optional(),
   include: PortalTiketIncludeSchema.optional(),
-  where: PortalTiketWhereUniqueInputSchema,
+  where: PortalTiketWhereUniqueInputSchema, 
 }).strict();
 
 export const PortalTiketFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PortalTiketFindUniqueOrThrowArgs> = z.object({
   select: PortalTiketSelectSchema.optional(),
   include: PortalTiketIncludeSchema.optional(),
-  where: PortalTiketWhereUniqueInputSchema,
+  where: PortalTiketWhereUniqueInputSchema, 
 }).strict();
 
 export const AutoIsolirSettingsFindFirstArgsSchema: z.ZodType<Prisma.AutoIsolirSettingsFindFirstArgs> = z.object({
   select: AutoIsolirSettingsSelectSchema.optional(),
   include: AutoIsolirSettingsIncludeSchema.optional(),
-  where: AutoIsolirSettingsWhereInputSchema.optional(),
+  where: AutoIsolirSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ AutoIsolirSettingsOrderByWithRelationInputSchema.array(), AutoIsolirSettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: AutoIsolirSettingsWhereUniqueInputSchema.optional(),
+  cursor: AutoIsolirSettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ AutoIsolirSettingsScalarFieldEnumSchema, AutoIsolirSettingsScalarFieldEnumSchema.array() ]).optional(),
@@ -35899,9 +38297,9 @@ export const AutoIsolirSettingsFindFirstArgsSchema: z.ZodType<Prisma.AutoIsolirS
 export const AutoIsolirSettingsFindFirstOrThrowArgsSchema: z.ZodType<Prisma.AutoIsolirSettingsFindFirstOrThrowArgs> = z.object({
   select: AutoIsolirSettingsSelectSchema.optional(),
   include: AutoIsolirSettingsIncludeSchema.optional(),
-  where: AutoIsolirSettingsWhereInputSchema.optional(),
+  where: AutoIsolirSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ AutoIsolirSettingsOrderByWithRelationInputSchema.array(), AutoIsolirSettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: AutoIsolirSettingsWhereUniqueInputSchema.optional(),
+  cursor: AutoIsolirSettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ AutoIsolirSettingsScalarFieldEnumSchema, AutoIsolirSettingsScalarFieldEnumSchema.array() ]).optional(),
@@ -35910,27 +38308,27 @@ export const AutoIsolirSettingsFindFirstOrThrowArgsSchema: z.ZodType<Prisma.Auto
 export const AutoIsolirSettingsFindManyArgsSchema: z.ZodType<Prisma.AutoIsolirSettingsFindManyArgs> = z.object({
   select: AutoIsolirSettingsSelectSchema.optional(),
   include: AutoIsolirSettingsIncludeSchema.optional(),
-  where: AutoIsolirSettingsWhereInputSchema.optional(),
+  where: AutoIsolirSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ AutoIsolirSettingsOrderByWithRelationInputSchema.array(), AutoIsolirSettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: AutoIsolirSettingsWhereUniqueInputSchema.optional(),
+  cursor: AutoIsolirSettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ AutoIsolirSettingsScalarFieldEnumSchema, AutoIsolirSettingsScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const AutoIsolirSettingsAggregateArgsSchema: z.ZodType<Prisma.AutoIsolirSettingsAggregateArgs> = z.object({
-  where: AutoIsolirSettingsWhereInputSchema.optional(),
+  where: AutoIsolirSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ AutoIsolirSettingsOrderByWithRelationInputSchema.array(), AutoIsolirSettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: AutoIsolirSettingsWhereUniqueInputSchema.optional(),
+  cursor: AutoIsolirSettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const AutoIsolirSettingsGroupByArgsSchema: z.ZodType<Prisma.AutoIsolirSettingsGroupByArgs> = z.object({
-  where: AutoIsolirSettingsWhereInputSchema.optional(),
+  where: AutoIsolirSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ AutoIsolirSettingsOrderByWithAggregationInputSchema.array(), AutoIsolirSettingsOrderByWithAggregationInputSchema ]).optional(),
-  by: AutoIsolirSettingsScalarFieldEnumSchema.array(),
-  having: AutoIsolirSettingsScalarWhereWithAggregatesInputSchema.optional(),
+  by: AutoIsolirSettingsScalarFieldEnumSchema.array(), 
+  having: AutoIsolirSettingsScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -35938,21 +38336,21 @@ export const AutoIsolirSettingsGroupByArgsSchema: z.ZodType<Prisma.AutoIsolirSet
 export const AutoIsolirSettingsFindUniqueArgsSchema: z.ZodType<Prisma.AutoIsolirSettingsFindUniqueArgs> = z.object({
   select: AutoIsolirSettingsSelectSchema.optional(),
   include: AutoIsolirSettingsIncludeSchema.optional(),
-  where: AutoIsolirSettingsWhereUniqueInputSchema,
+  where: AutoIsolirSettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const AutoIsolirSettingsFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.AutoIsolirSettingsFindUniqueOrThrowArgs> = z.object({
   select: AutoIsolirSettingsSelectSchema.optional(),
   include: AutoIsolirSettingsIncludeSchema.optional(),
-  where: AutoIsolirSettingsWhereUniqueInputSchema,
+  where: AutoIsolirSettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const InvoiceSettingsFindFirstArgsSchema: z.ZodType<Prisma.InvoiceSettingsFindFirstArgs> = z.object({
   select: InvoiceSettingsSelectSchema.optional(),
   include: InvoiceSettingsIncludeSchema.optional(),
-  where: InvoiceSettingsWhereInputSchema.optional(),
+  where: InvoiceSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ InvoiceSettingsOrderByWithRelationInputSchema.array(), InvoiceSettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: InvoiceSettingsWhereUniqueInputSchema.optional(),
+  cursor: InvoiceSettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ InvoiceSettingsScalarFieldEnumSchema, InvoiceSettingsScalarFieldEnumSchema.array() ]).optional(),
@@ -35961,9 +38359,9 @@ export const InvoiceSettingsFindFirstArgsSchema: z.ZodType<Prisma.InvoiceSetting
 export const InvoiceSettingsFindFirstOrThrowArgsSchema: z.ZodType<Prisma.InvoiceSettingsFindFirstOrThrowArgs> = z.object({
   select: InvoiceSettingsSelectSchema.optional(),
   include: InvoiceSettingsIncludeSchema.optional(),
-  where: InvoiceSettingsWhereInputSchema.optional(),
+  where: InvoiceSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ InvoiceSettingsOrderByWithRelationInputSchema.array(), InvoiceSettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: InvoiceSettingsWhereUniqueInputSchema.optional(),
+  cursor: InvoiceSettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ InvoiceSettingsScalarFieldEnumSchema, InvoiceSettingsScalarFieldEnumSchema.array() ]).optional(),
@@ -35972,27 +38370,27 @@ export const InvoiceSettingsFindFirstOrThrowArgsSchema: z.ZodType<Prisma.Invoice
 export const InvoiceSettingsFindManyArgsSchema: z.ZodType<Prisma.InvoiceSettingsFindManyArgs> = z.object({
   select: InvoiceSettingsSelectSchema.optional(),
   include: InvoiceSettingsIncludeSchema.optional(),
-  where: InvoiceSettingsWhereInputSchema.optional(),
+  where: InvoiceSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ InvoiceSettingsOrderByWithRelationInputSchema.array(), InvoiceSettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: InvoiceSettingsWhereUniqueInputSchema.optional(),
+  cursor: InvoiceSettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ InvoiceSettingsScalarFieldEnumSchema, InvoiceSettingsScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const InvoiceSettingsAggregateArgsSchema: z.ZodType<Prisma.InvoiceSettingsAggregateArgs> = z.object({
-  where: InvoiceSettingsWhereInputSchema.optional(),
+  where: InvoiceSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ InvoiceSettingsOrderByWithRelationInputSchema.array(), InvoiceSettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: InvoiceSettingsWhereUniqueInputSchema.optional(),
+  cursor: InvoiceSettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const InvoiceSettingsGroupByArgsSchema: z.ZodType<Prisma.InvoiceSettingsGroupByArgs> = z.object({
-  where: InvoiceSettingsWhereInputSchema.optional(),
+  where: InvoiceSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ InvoiceSettingsOrderByWithAggregationInputSchema.array(), InvoiceSettingsOrderByWithAggregationInputSchema ]).optional(),
-  by: InvoiceSettingsScalarFieldEnumSchema.array(),
-  having: InvoiceSettingsScalarWhereWithAggregatesInputSchema.optional(),
+  by: InvoiceSettingsScalarFieldEnumSchema.array(), 
+  having: InvoiceSettingsScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -36000,21 +38398,21 @@ export const InvoiceSettingsGroupByArgsSchema: z.ZodType<Prisma.InvoiceSettingsG
 export const InvoiceSettingsFindUniqueArgsSchema: z.ZodType<Prisma.InvoiceSettingsFindUniqueArgs> = z.object({
   select: InvoiceSettingsSelectSchema.optional(),
   include: InvoiceSettingsIncludeSchema.optional(),
-  where: InvoiceSettingsWhereUniqueInputSchema,
+  where: InvoiceSettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const InvoiceSettingsFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.InvoiceSettingsFindUniqueOrThrowArgs> = z.object({
   select: InvoiceSettingsSelectSchema.optional(),
   include: InvoiceSettingsIncludeSchema.optional(),
-  where: InvoiceSettingsWhereUniqueInputSchema,
+  where: InvoiceSettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const AutoIsolirLogFindFirstArgsSchema: z.ZodType<Prisma.AutoIsolirLogFindFirstArgs> = z.object({
   select: AutoIsolirLogSelectSchema.optional(),
   include: AutoIsolirLogIncludeSchema.optional(),
-  where: AutoIsolirLogWhereInputSchema.optional(),
+  where: AutoIsolirLogWhereInputSchema.optional(), 
   orderBy: z.union([ AutoIsolirLogOrderByWithRelationInputSchema.array(), AutoIsolirLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: AutoIsolirLogWhereUniqueInputSchema.optional(),
+  cursor: AutoIsolirLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ AutoIsolirLogScalarFieldEnumSchema, AutoIsolirLogScalarFieldEnumSchema.array() ]).optional(),
@@ -36023,9 +38421,9 @@ export const AutoIsolirLogFindFirstArgsSchema: z.ZodType<Prisma.AutoIsolirLogFin
 export const AutoIsolirLogFindFirstOrThrowArgsSchema: z.ZodType<Prisma.AutoIsolirLogFindFirstOrThrowArgs> = z.object({
   select: AutoIsolirLogSelectSchema.optional(),
   include: AutoIsolirLogIncludeSchema.optional(),
-  where: AutoIsolirLogWhereInputSchema.optional(),
+  where: AutoIsolirLogWhereInputSchema.optional(), 
   orderBy: z.union([ AutoIsolirLogOrderByWithRelationInputSchema.array(), AutoIsolirLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: AutoIsolirLogWhereUniqueInputSchema.optional(),
+  cursor: AutoIsolirLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ AutoIsolirLogScalarFieldEnumSchema, AutoIsolirLogScalarFieldEnumSchema.array() ]).optional(),
@@ -36034,27 +38432,27 @@ export const AutoIsolirLogFindFirstOrThrowArgsSchema: z.ZodType<Prisma.AutoIsoli
 export const AutoIsolirLogFindManyArgsSchema: z.ZodType<Prisma.AutoIsolirLogFindManyArgs> = z.object({
   select: AutoIsolirLogSelectSchema.optional(),
   include: AutoIsolirLogIncludeSchema.optional(),
-  where: AutoIsolirLogWhereInputSchema.optional(),
+  where: AutoIsolirLogWhereInputSchema.optional(), 
   orderBy: z.union([ AutoIsolirLogOrderByWithRelationInputSchema.array(), AutoIsolirLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: AutoIsolirLogWhereUniqueInputSchema.optional(),
+  cursor: AutoIsolirLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ AutoIsolirLogScalarFieldEnumSchema, AutoIsolirLogScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const AutoIsolirLogAggregateArgsSchema: z.ZodType<Prisma.AutoIsolirLogAggregateArgs> = z.object({
-  where: AutoIsolirLogWhereInputSchema.optional(),
+  where: AutoIsolirLogWhereInputSchema.optional(), 
   orderBy: z.union([ AutoIsolirLogOrderByWithRelationInputSchema.array(), AutoIsolirLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: AutoIsolirLogWhereUniqueInputSchema.optional(),
+  cursor: AutoIsolirLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const AutoIsolirLogGroupByArgsSchema: z.ZodType<Prisma.AutoIsolirLogGroupByArgs> = z.object({
-  where: AutoIsolirLogWhereInputSchema.optional(),
+  where: AutoIsolirLogWhereInputSchema.optional(), 
   orderBy: z.union([ AutoIsolirLogOrderByWithAggregationInputSchema.array(), AutoIsolirLogOrderByWithAggregationInputSchema ]).optional(),
-  by: AutoIsolirLogScalarFieldEnumSchema.array(),
-  having: AutoIsolirLogScalarWhereWithAggregatesInputSchema.optional(),
+  by: AutoIsolirLogScalarFieldEnumSchema.array(), 
+  having: AutoIsolirLogScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -36062,20 +38460,20 @@ export const AutoIsolirLogGroupByArgsSchema: z.ZodType<Prisma.AutoIsolirLogGroup
 export const AutoIsolirLogFindUniqueArgsSchema: z.ZodType<Prisma.AutoIsolirLogFindUniqueArgs> = z.object({
   select: AutoIsolirLogSelectSchema.optional(),
   include: AutoIsolirLogIncludeSchema.optional(),
-  where: AutoIsolirLogWhereUniqueInputSchema,
+  where: AutoIsolirLogWhereUniqueInputSchema, 
 }).strict();
 
 export const AutoIsolirLogFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.AutoIsolirLogFindUniqueOrThrowArgs> = z.object({
   select: AutoIsolirLogSelectSchema.optional(),
   include: AutoIsolirLogIncludeSchema.optional(),
-  where: AutoIsolirLogWhereUniqueInputSchema,
+  where: AutoIsolirLogWhereUniqueInputSchema, 
 }).strict();
 
 export const JobLockFindFirstArgsSchema: z.ZodType<Prisma.JobLockFindFirstArgs> = z.object({
   select: JobLockSelectSchema.optional(),
-  where: JobLockWhereInputSchema.optional(),
+  where: JobLockWhereInputSchema.optional(), 
   orderBy: z.union([ JobLockOrderByWithRelationInputSchema.array(), JobLockOrderByWithRelationInputSchema ]).optional(),
-  cursor: JobLockWhereUniqueInputSchema.optional(),
+  cursor: JobLockWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ JobLockScalarFieldEnumSchema, JobLockScalarFieldEnumSchema.array() ]).optional(),
@@ -36083,9 +38481,9 @@ export const JobLockFindFirstArgsSchema: z.ZodType<Prisma.JobLockFindFirstArgs> 
 
 export const JobLockFindFirstOrThrowArgsSchema: z.ZodType<Prisma.JobLockFindFirstOrThrowArgs> = z.object({
   select: JobLockSelectSchema.optional(),
-  where: JobLockWhereInputSchema.optional(),
+  where: JobLockWhereInputSchema.optional(), 
   orderBy: z.union([ JobLockOrderByWithRelationInputSchema.array(), JobLockOrderByWithRelationInputSchema ]).optional(),
-  cursor: JobLockWhereUniqueInputSchema.optional(),
+  cursor: JobLockWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ JobLockScalarFieldEnumSchema, JobLockScalarFieldEnumSchema.array() ]).optional(),
@@ -36093,46 +38491,46 @@ export const JobLockFindFirstOrThrowArgsSchema: z.ZodType<Prisma.JobLockFindFirs
 
 export const JobLockFindManyArgsSchema: z.ZodType<Prisma.JobLockFindManyArgs> = z.object({
   select: JobLockSelectSchema.optional(),
-  where: JobLockWhereInputSchema.optional(),
+  where: JobLockWhereInputSchema.optional(), 
   orderBy: z.union([ JobLockOrderByWithRelationInputSchema.array(), JobLockOrderByWithRelationInputSchema ]).optional(),
-  cursor: JobLockWhereUniqueInputSchema.optional(),
+  cursor: JobLockWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ JobLockScalarFieldEnumSchema, JobLockScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const JobLockAggregateArgsSchema: z.ZodType<Prisma.JobLockAggregateArgs> = z.object({
-  where: JobLockWhereInputSchema.optional(),
+  where: JobLockWhereInputSchema.optional(), 
   orderBy: z.union([ JobLockOrderByWithRelationInputSchema.array(), JobLockOrderByWithRelationInputSchema ]).optional(),
-  cursor: JobLockWhereUniqueInputSchema.optional(),
+  cursor: JobLockWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const JobLockGroupByArgsSchema: z.ZodType<Prisma.JobLockGroupByArgs> = z.object({
-  where: JobLockWhereInputSchema.optional(),
+  where: JobLockWhereInputSchema.optional(), 
   orderBy: z.union([ JobLockOrderByWithAggregationInputSchema.array(), JobLockOrderByWithAggregationInputSchema ]).optional(),
-  by: JobLockScalarFieldEnumSchema.array(),
-  having: JobLockScalarWhereWithAggregatesInputSchema.optional(),
+  by: JobLockScalarFieldEnumSchema.array(), 
+  having: JobLockScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const JobLockFindUniqueArgsSchema: z.ZodType<Prisma.JobLockFindUniqueArgs> = z.object({
   select: JobLockSelectSchema.optional(),
-  where: JobLockWhereUniqueInputSchema,
+  where: JobLockWhereUniqueInputSchema, 
 }).strict();
 
 export const JobLockFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.JobLockFindUniqueOrThrowArgs> = z.object({
   select: JobLockSelectSchema.optional(),
-  where: JobLockWhereUniqueInputSchema,
+  where: JobLockWhereUniqueInputSchema, 
 }).strict();
 
 export const AppSettingsFindFirstArgsSchema: z.ZodType<Prisma.AppSettingsFindFirstArgs> = z.object({
   select: AppSettingsSelectSchema.optional(),
-  where: AppSettingsWhereInputSchema.optional(),
+  where: AppSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ AppSettingsOrderByWithRelationInputSchema.array(), AppSettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: AppSettingsWhereUniqueInputSchema.optional(),
+  cursor: AppSettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ AppSettingsScalarFieldEnumSchema, AppSettingsScalarFieldEnumSchema.array() ]).optional(),
@@ -36140,9 +38538,9 @@ export const AppSettingsFindFirstArgsSchema: z.ZodType<Prisma.AppSettingsFindFir
 
 export const AppSettingsFindFirstOrThrowArgsSchema: z.ZodType<Prisma.AppSettingsFindFirstOrThrowArgs> = z.object({
   select: AppSettingsSelectSchema.optional(),
-  where: AppSettingsWhereInputSchema.optional(),
+  where: AppSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ AppSettingsOrderByWithRelationInputSchema.array(), AppSettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: AppSettingsWhereUniqueInputSchema.optional(),
+  cursor: AppSettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ AppSettingsScalarFieldEnumSchema, AppSettingsScalarFieldEnumSchema.array() ]).optional(),
@@ -36150,47 +38548,47 @@ export const AppSettingsFindFirstOrThrowArgsSchema: z.ZodType<Prisma.AppSettings
 
 export const AppSettingsFindManyArgsSchema: z.ZodType<Prisma.AppSettingsFindManyArgs> = z.object({
   select: AppSettingsSelectSchema.optional(),
-  where: AppSettingsWhereInputSchema.optional(),
+  where: AppSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ AppSettingsOrderByWithRelationInputSchema.array(), AppSettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: AppSettingsWhereUniqueInputSchema.optional(),
+  cursor: AppSettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ AppSettingsScalarFieldEnumSchema, AppSettingsScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const AppSettingsAggregateArgsSchema: z.ZodType<Prisma.AppSettingsAggregateArgs> = z.object({
-  where: AppSettingsWhereInputSchema.optional(),
+  where: AppSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ AppSettingsOrderByWithRelationInputSchema.array(), AppSettingsOrderByWithRelationInputSchema ]).optional(),
-  cursor: AppSettingsWhereUniqueInputSchema.optional(),
+  cursor: AppSettingsWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const AppSettingsGroupByArgsSchema: z.ZodType<Prisma.AppSettingsGroupByArgs> = z.object({
-  where: AppSettingsWhereInputSchema.optional(),
+  where: AppSettingsWhereInputSchema.optional(), 
   orderBy: z.union([ AppSettingsOrderByWithAggregationInputSchema.array(), AppSettingsOrderByWithAggregationInputSchema ]).optional(),
-  by: AppSettingsScalarFieldEnumSchema.array(),
-  having: AppSettingsScalarWhereWithAggregatesInputSchema.optional(),
+  by: AppSettingsScalarFieldEnumSchema.array(), 
+  having: AppSettingsScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const AppSettingsFindUniqueArgsSchema: z.ZodType<Prisma.AppSettingsFindUniqueArgs> = z.object({
   select: AppSettingsSelectSchema.optional(),
-  where: AppSettingsWhereUniqueInputSchema,
+  where: AppSettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const AppSettingsFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.AppSettingsFindUniqueOrThrowArgs> = z.object({
   select: AppSettingsSelectSchema.optional(),
-  where: AppSettingsWhereUniqueInputSchema,
+  where: AppSettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const BillingGenerateLogFindFirstArgsSchema: z.ZodType<Prisma.BillingGenerateLogFindFirstArgs> = z.object({
   select: BillingGenerateLogSelectSchema.optional(),
   include: BillingGenerateLogIncludeSchema.optional(),
-  where: BillingGenerateLogWhereInputSchema.optional(),
+  where: BillingGenerateLogWhereInputSchema.optional(), 
   orderBy: z.union([ BillingGenerateLogOrderByWithRelationInputSchema.array(), BillingGenerateLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: BillingGenerateLogWhereUniqueInputSchema.optional(),
+  cursor: BillingGenerateLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ BillingGenerateLogScalarFieldEnumSchema, BillingGenerateLogScalarFieldEnumSchema.array() ]).optional(),
@@ -36199,9 +38597,9 @@ export const BillingGenerateLogFindFirstArgsSchema: z.ZodType<Prisma.BillingGene
 export const BillingGenerateLogFindFirstOrThrowArgsSchema: z.ZodType<Prisma.BillingGenerateLogFindFirstOrThrowArgs> = z.object({
   select: BillingGenerateLogSelectSchema.optional(),
   include: BillingGenerateLogIncludeSchema.optional(),
-  where: BillingGenerateLogWhereInputSchema.optional(),
+  where: BillingGenerateLogWhereInputSchema.optional(), 
   orderBy: z.union([ BillingGenerateLogOrderByWithRelationInputSchema.array(), BillingGenerateLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: BillingGenerateLogWhereUniqueInputSchema.optional(),
+  cursor: BillingGenerateLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ BillingGenerateLogScalarFieldEnumSchema, BillingGenerateLogScalarFieldEnumSchema.array() ]).optional(),
@@ -36210,27 +38608,27 @@ export const BillingGenerateLogFindFirstOrThrowArgsSchema: z.ZodType<Prisma.Bill
 export const BillingGenerateLogFindManyArgsSchema: z.ZodType<Prisma.BillingGenerateLogFindManyArgs> = z.object({
   select: BillingGenerateLogSelectSchema.optional(),
   include: BillingGenerateLogIncludeSchema.optional(),
-  where: BillingGenerateLogWhereInputSchema.optional(),
+  where: BillingGenerateLogWhereInputSchema.optional(), 
   orderBy: z.union([ BillingGenerateLogOrderByWithRelationInputSchema.array(), BillingGenerateLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: BillingGenerateLogWhereUniqueInputSchema.optional(),
+  cursor: BillingGenerateLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ BillingGenerateLogScalarFieldEnumSchema, BillingGenerateLogScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const BillingGenerateLogAggregateArgsSchema: z.ZodType<Prisma.BillingGenerateLogAggregateArgs> = z.object({
-  where: BillingGenerateLogWhereInputSchema.optional(),
+  where: BillingGenerateLogWhereInputSchema.optional(), 
   orderBy: z.union([ BillingGenerateLogOrderByWithRelationInputSchema.array(), BillingGenerateLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: BillingGenerateLogWhereUniqueInputSchema.optional(),
+  cursor: BillingGenerateLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const BillingGenerateLogGroupByArgsSchema: z.ZodType<Prisma.BillingGenerateLogGroupByArgs> = z.object({
-  where: BillingGenerateLogWhereInputSchema.optional(),
+  where: BillingGenerateLogWhereInputSchema.optional(), 
   orderBy: z.union([ BillingGenerateLogOrderByWithAggregationInputSchema.array(), BillingGenerateLogOrderByWithAggregationInputSchema ]).optional(),
-  by: BillingGenerateLogScalarFieldEnumSchema.array(),
-  having: BillingGenerateLogScalarWhereWithAggregatesInputSchema.optional(),
+  by: BillingGenerateLogScalarFieldEnumSchema.array(), 
+  having: BillingGenerateLogScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -36238,20 +38636,20 @@ export const BillingGenerateLogGroupByArgsSchema: z.ZodType<Prisma.BillingGenera
 export const BillingGenerateLogFindUniqueArgsSchema: z.ZodType<Prisma.BillingGenerateLogFindUniqueArgs> = z.object({
   select: BillingGenerateLogSelectSchema.optional(),
   include: BillingGenerateLogIncludeSchema.optional(),
-  where: BillingGenerateLogWhereUniqueInputSchema,
+  where: BillingGenerateLogWhereUniqueInputSchema, 
 }).strict();
 
 export const BillingGenerateLogFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.BillingGenerateLogFindUniqueOrThrowArgs> = z.object({
   select: BillingGenerateLogSelectSchema.optional(),
   include: BillingGenerateLogIncludeSchema.optional(),
-  where: BillingGenerateLogWhereUniqueInputSchema,
+  where: BillingGenerateLogWhereUniqueInputSchema, 
 }).strict();
 
 export const AuditLogFindFirstArgsSchema: z.ZodType<Prisma.AuditLogFindFirstArgs> = z.object({
   select: AuditLogSelectSchema.optional(),
-  where: AuditLogWhereInputSchema.optional(),
+  where: AuditLogWhereInputSchema.optional(), 
   orderBy: z.union([ AuditLogOrderByWithRelationInputSchema.array(), AuditLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: AuditLogWhereUniqueInputSchema.optional(),
+  cursor: AuditLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ AuditLogScalarFieldEnumSchema, AuditLogScalarFieldEnumSchema.array() ]).optional(),
@@ -36259,9 +38657,9 @@ export const AuditLogFindFirstArgsSchema: z.ZodType<Prisma.AuditLogFindFirstArgs
 
 export const AuditLogFindFirstOrThrowArgsSchema: z.ZodType<Prisma.AuditLogFindFirstOrThrowArgs> = z.object({
   select: AuditLogSelectSchema.optional(),
-  where: AuditLogWhereInputSchema.optional(),
+  where: AuditLogWhereInputSchema.optional(), 
   orderBy: z.union([ AuditLogOrderByWithRelationInputSchema.array(), AuditLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: AuditLogWhereUniqueInputSchema.optional(),
+  cursor: AuditLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ AuditLogScalarFieldEnumSchema, AuditLogScalarFieldEnumSchema.array() ]).optional(),
@@ -36269,47 +38667,47 @@ export const AuditLogFindFirstOrThrowArgsSchema: z.ZodType<Prisma.AuditLogFindFi
 
 export const AuditLogFindManyArgsSchema: z.ZodType<Prisma.AuditLogFindManyArgs> = z.object({
   select: AuditLogSelectSchema.optional(),
-  where: AuditLogWhereInputSchema.optional(),
+  where: AuditLogWhereInputSchema.optional(), 
   orderBy: z.union([ AuditLogOrderByWithRelationInputSchema.array(), AuditLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: AuditLogWhereUniqueInputSchema.optional(),
+  cursor: AuditLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ AuditLogScalarFieldEnumSchema, AuditLogScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const AuditLogAggregateArgsSchema: z.ZodType<Prisma.AuditLogAggregateArgs> = z.object({
-  where: AuditLogWhereInputSchema.optional(),
+  where: AuditLogWhereInputSchema.optional(), 
   orderBy: z.union([ AuditLogOrderByWithRelationInputSchema.array(), AuditLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: AuditLogWhereUniqueInputSchema.optional(),
+  cursor: AuditLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const AuditLogGroupByArgsSchema: z.ZodType<Prisma.AuditLogGroupByArgs> = z.object({
-  where: AuditLogWhereInputSchema.optional(),
+  where: AuditLogWhereInputSchema.optional(), 
   orderBy: z.union([ AuditLogOrderByWithAggregationInputSchema.array(), AuditLogOrderByWithAggregationInputSchema ]).optional(),
-  by: AuditLogScalarFieldEnumSchema.array(),
-  having: AuditLogScalarWhereWithAggregatesInputSchema.optional(),
+  by: AuditLogScalarFieldEnumSchema.array(), 
+  having: AuditLogScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const AuditLogFindUniqueArgsSchema: z.ZodType<Prisma.AuditLogFindUniqueArgs> = z.object({
   select: AuditLogSelectSchema.optional(),
-  where: AuditLogWhereUniqueInputSchema,
+  where: AuditLogWhereUniqueInputSchema, 
 }).strict();
 
 export const AuditLogFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.AuditLogFindUniqueOrThrowArgs> = z.object({
   select: AuditLogSelectSchema.optional(),
-  where: AuditLogWhereUniqueInputSchema,
+  where: AuditLogWhereUniqueInputSchema, 
 }).strict();
 
 export const PenagihFindFirstArgsSchema: z.ZodType<Prisma.PenagihFindFirstArgs> = z.object({
   select: PenagihSelectSchema.optional(),
   include: PenagihIncludeSchema.optional(),
-  where: PenagihWhereInputSchema.optional(),
+  where: PenagihWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihOrderByWithRelationInputSchema.array(), PenagihOrderByWithRelationInputSchema ]).optional(),
-  cursor: PenagihWhereUniqueInputSchema.optional(),
+  cursor: PenagihWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PenagihScalarFieldEnumSchema, PenagihScalarFieldEnumSchema.array() ]).optional(),
@@ -36318,9 +38716,9 @@ export const PenagihFindFirstArgsSchema: z.ZodType<Prisma.PenagihFindFirstArgs> 
 export const PenagihFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PenagihFindFirstOrThrowArgs> = z.object({
   select: PenagihSelectSchema.optional(),
   include: PenagihIncludeSchema.optional(),
-  where: PenagihWhereInputSchema.optional(),
+  where: PenagihWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihOrderByWithRelationInputSchema.array(), PenagihOrderByWithRelationInputSchema ]).optional(),
-  cursor: PenagihWhereUniqueInputSchema.optional(),
+  cursor: PenagihWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PenagihScalarFieldEnumSchema, PenagihScalarFieldEnumSchema.array() ]).optional(),
@@ -36329,27 +38727,27 @@ export const PenagihFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PenagihFindFirs
 export const PenagihFindManyArgsSchema: z.ZodType<Prisma.PenagihFindManyArgs> = z.object({
   select: PenagihSelectSchema.optional(),
   include: PenagihIncludeSchema.optional(),
-  where: PenagihWhereInputSchema.optional(),
+  where: PenagihWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihOrderByWithRelationInputSchema.array(), PenagihOrderByWithRelationInputSchema ]).optional(),
-  cursor: PenagihWhereUniqueInputSchema.optional(),
+  cursor: PenagihWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PenagihScalarFieldEnumSchema, PenagihScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PenagihAggregateArgsSchema: z.ZodType<Prisma.PenagihAggregateArgs> = z.object({
-  where: PenagihWhereInputSchema.optional(),
+  where: PenagihWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihOrderByWithRelationInputSchema.array(), PenagihOrderByWithRelationInputSchema ]).optional(),
-  cursor: PenagihWhereUniqueInputSchema.optional(),
+  cursor: PenagihWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PenagihGroupByArgsSchema: z.ZodType<Prisma.PenagihGroupByArgs> = z.object({
-  where: PenagihWhereInputSchema.optional(),
+  where: PenagihWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihOrderByWithAggregationInputSchema.array(), PenagihOrderByWithAggregationInputSchema ]).optional(),
-  by: PenagihScalarFieldEnumSchema.array(),
-  having: PenagihScalarWhereWithAggregatesInputSchema.optional(),
+  by: PenagihScalarFieldEnumSchema.array(), 
+  having: PenagihScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -36357,21 +38755,21 @@ export const PenagihGroupByArgsSchema: z.ZodType<Prisma.PenagihGroupByArgs> = z.
 export const PenagihFindUniqueArgsSchema: z.ZodType<Prisma.PenagihFindUniqueArgs> = z.object({
   select: PenagihSelectSchema.optional(),
   include: PenagihIncludeSchema.optional(),
-  where: PenagihWhereUniqueInputSchema,
+  where: PenagihWhereUniqueInputSchema, 
 }).strict();
 
 export const PenagihFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PenagihFindUniqueOrThrowArgs> = z.object({
   select: PenagihSelectSchema.optional(),
   include: PenagihIncludeSchema.optional(),
-  where: PenagihWhereUniqueInputSchema,
+  where: PenagihWhereUniqueInputSchema, 
 }).strict();
 
 export const PenagihPenugasanFindFirstArgsSchema: z.ZodType<Prisma.PenagihPenugasanFindFirstArgs> = z.object({
   select: PenagihPenugasanSelectSchema.optional(),
   include: PenagihPenugasanIncludeSchema.optional(),
-  where: PenagihPenugasanWhereInputSchema.optional(),
+  where: PenagihPenugasanWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihPenugasanOrderByWithRelationInputSchema.array(), PenagihPenugasanOrderByWithRelationInputSchema ]).optional(),
-  cursor: PenagihPenugasanWhereUniqueInputSchema.optional(),
+  cursor: PenagihPenugasanWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PenagihPenugasanScalarFieldEnumSchema, PenagihPenugasanScalarFieldEnumSchema.array() ]).optional(),
@@ -36380,9 +38778,9 @@ export const PenagihPenugasanFindFirstArgsSchema: z.ZodType<Prisma.PenagihPenuga
 export const PenagihPenugasanFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PenagihPenugasanFindFirstOrThrowArgs> = z.object({
   select: PenagihPenugasanSelectSchema.optional(),
   include: PenagihPenugasanIncludeSchema.optional(),
-  where: PenagihPenugasanWhereInputSchema.optional(),
+  where: PenagihPenugasanWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihPenugasanOrderByWithRelationInputSchema.array(), PenagihPenugasanOrderByWithRelationInputSchema ]).optional(),
-  cursor: PenagihPenugasanWhereUniqueInputSchema.optional(),
+  cursor: PenagihPenugasanWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PenagihPenugasanScalarFieldEnumSchema, PenagihPenugasanScalarFieldEnumSchema.array() ]).optional(),
@@ -36391,27 +38789,27 @@ export const PenagihPenugasanFindFirstOrThrowArgsSchema: z.ZodType<Prisma.Penagi
 export const PenagihPenugasanFindManyArgsSchema: z.ZodType<Prisma.PenagihPenugasanFindManyArgs> = z.object({
   select: PenagihPenugasanSelectSchema.optional(),
   include: PenagihPenugasanIncludeSchema.optional(),
-  where: PenagihPenugasanWhereInputSchema.optional(),
+  where: PenagihPenugasanWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihPenugasanOrderByWithRelationInputSchema.array(), PenagihPenugasanOrderByWithRelationInputSchema ]).optional(),
-  cursor: PenagihPenugasanWhereUniqueInputSchema.optional(),
+  cursor: PenagihPenugasanWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PenagihPenugasanScalarFieldEnumSchema, PenagihPenugasanScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PenagihPenugasanAggregateArgsSchema: z.ZodType<Prisma.PenagihPenugasanAggregateArgs> = z.object({
-  where: PenagihPenugasanWhereInputSchema.optional(),
+  where: PenagihPenugasanWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihPenugasanOrderByWithRelationInputSchema.array(), PenagihPenugasanOrderByWithRelationInputSchema ]).optional(),
-  cursor: PenagihPenugasanWhereUniqueInputSchema.optional(),
+  cursor: PenagihPenugasanWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PenagihPenugasanGroupByArgsSchema: z.ZodType<Prisma.PenagihPenugasanGroupByArgs> = z.object({
-  where: PenagihPenugasanWhereInputSchema.optional(),
+  where: PenagihPenugasanWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihPenugasanOrderByWithAggregationInputSchema.array(), PenagihPenugasanOrderByWithAggregationInputSchema ]).optional(),
-  by: PenagihPenugasanScalarFieldEnumSchema.array(),
-  having: PenagihPenugasanScalarWhereWithAggregatesInputSchema.optional(),
+  by: PenagihPenugasanScalarFieldEnumSchema.array(), 
+  having: PenagihPenugasanScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -36419,21 +38817,21 @@ export const PenagihPenugasanGroupByArgsSchema: z.ZodType<Prisma.PenagihPenugasa
 export const PenagihPenugasanFindUniqueArgsSchema: z.ZodType<Prisma.PenagihPenugasanFindUniqueArgs> = z.object({
   select: PenagihPenugasanSelectSchema.optional(),
   include: PenagihPenugasanIncludeSchema.optional(),
-  where: PenagihPenugasanWhereUniqueInputSchema,
+  where: PenagihPenugasanWhereUniqueInputSchema, 
 }).strict();
 
 export const PenagihPenugasanFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PenagihPenugasanFindUniqueOrThrowArgs> = z.object({
   select: PenagihPenugasanSelectSchema.optional(),
   include: PenagihPenugasanIncludeSchema.optional(),
-  where: PenagihPenugasanWhereUniqueInputSchema,
+  where: PenagihPenugasanWhereUniqueInputSchema, 
 }).strict();
 
 export const PenagihPenugasanLogFindFirstArgsSchema: z.ZodType<Prisma.PenagihPenugasanLogFindFirstArgs> = z.object({
   select: PenagihPenugasanLogSelectSchema.optional(),
   include: PenagihPenugasanLogIncludeSchema.optional(),
-  where: PenagihPenugasanLogWhereInputSchema.optional(),
+  where: PenagihPenugasanLogWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihPenugasanLogOrderByWithRelationInputSchema.array(), PenagihPenugasanLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: PenagihPenugasanLogWhereUniqueInputSchema.optional(),
+  cursor: PenagihPenugasanLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PenagihPenugasanLogScalarFieldEnumSchema, PenagihPenugasanLogScalarFieldEnumSchema.array() ]).optional(),
@@ -36442,9 +38840,9 @@ export const PenagihPenugasanLogFindFirstArgsSchema: z.ZodType<Prisma.PenagihPen
 export const PenagihPenugasanLogFindFirstOrThrowArgsSchema: z.ZodType<Prisma.PenagihPenugasanLogFindFirstOrThrowArgs> = z.object({
   select: PenagihPenugasanLogSelectSchema.optional(),
   include: PenagihPenugasanLogIncludeSchema.optional(),
-  where: PenagihPenugasanLogWhereInputSchema.optional(),
+  where: PenagihPenugasanLogWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihPenugasanLogOrderByWithRelationInputSchema.array(), PenagihPenugasanLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: PenagihPenugasanLogWhereUniqueInputSchema.optional(),
+  cursor: PenagihPenugasanLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PenagihPenugasanLogScalarFieldEnumSchema, PenagihPenugasanLogScalarFieldEnumSchema.array() ]).optional(),
@@ -36453,27 +38851,27 @@ export const PenagihPenugasanLogFindFirstOrThrowArgsSchema: z.ZodType<Prisma.Pen
 export const PenagihPenugasanLogFindManyArgsSchema: z.ZodType<Prisma.PenagihPenugasanLogFindManyArgs> = z.object({
   select: PenagihPenugasanLogSelectSchema.optional(),
   include: PenagihPenugasanLogIncludeSchema.optional(),
-  where: PenagihPenugasanLogWhereInputSchema.optional(),
+  where: PenagihPenugasanLogWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihPenugasanLogOrderByWithRelationInputSchema.array(), PenagihPenugasanLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: PenagihPenugasanLogWhereUniqueInputSchema.optional(),
+  cursor: PenagihPenugasanLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
   distinct: z.union([ PenagihPenugasanLogScalarFieldEnumSchema, PenagihPenugasanLogScalarFieldEnumSchema.array() ]).optional(),
 }).strict();
 
 export const PenagihPenugasanLogAggregateArgsSchema: z.ZodType<Prisma.PenagihPenugasanLogAggregateArgs> = z.object({
-  where: PenagihPenugasanLogWhereInputSchema.optional(),
+  where: PenagihPenugasanLogWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihPenugasanLogOrderByWithRelationInputSchema.array(), PenagihPenugasanLogOrderByWithRelationInputSchema ]).optional(),
-  cursor: PenagihPenugasanLogWhereUniqueInputSchema.optional(),
+  cursor: PenagihPenugasanLogWhereUniqueInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
 
 export const PenagihPenugasanLogGroupByArgsSchema: z.ZodType<Prisma.PenagihPenugasanLogGroupByArgs> = z.object({
-  where: PenagihPenugasanLogWhereInputSchema.optional(),
+  where: PenagihPenugasanLogWhereInputSchema.optional(), 
   orderBy: z.union([ PenagihPenugasanLogOrderByWithAggregationInputSchema.array(), PenagihPenugasanLogOrderByWithAggregationInputSchema ]).optional(),
-  by: PenagihPenugasanLogScalarFieldEnumSchema.array(),
-  having: PenagihPenugasanLogScalarWhereWithAggregatesInputSchema.optional(),
+  by: PenagihPenugasanLogScalarFieldEnumSchema.array(), 
+  having: PenagihPenugasanLogScalarWhereWithAggregatesInputSchema.optional(), 
   take: z.number().optional(),
   skip: z.number().optional(),
 }).strict();
@@ -36481,13 +38879,75 @@ export const PenagihPenugasanLogGroupByArgsSchema: z.ZodType<Prisma.PenagihPenug
 export const PenagihPenugasanLogFindUniqueArgsSchema: z.ZodType<Prisma.PenagihPenugasanLogFindUniqueArgs> = z.object({
   select: PenagihPenugasanLogSelectSchema.optional(),
   include: PenagihPenugasanLogIncludeSchema.optional(),
-  where: PenagihPenugasanLogWhereUniqueInputSchema,
+  where: PenagihPenugasanLogWhereUniqueInputSchema, 
 }).strict();
 
 export const PenagihPenugasanLogFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.PenagihPenugasanLogFindUniqueOrThrowArgs> = z.object({
   select: PenagihPenugasanLogSelectSchema.optional(),
   include: PenagihPenugasanLogIncludeSchema.optional(),
-  where: PenagihPenugasanLogWhereUniqueInputSchema,
+  where: PenagihPenugasanLogWhereUniqueInputSchema, 
+}).strict();
+
+export const KomisiPetugasEntriFindFirstArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriFindFirstArgs> = z.object({
+  select: KomisiPetugasEntriSelectSchema.optional(),
+  include: KomisiPetugasEntriIncludeSchema.optional(),
+  where: KomisiPetugasEntriWhereInputSchema.optional(), 
+  orderBy: z.union([ KomisiPetugasEntriOrderByWithRelationInputSchema.array(), KomisiPetugasEntriOrderByWithRelationInputSchema ]).optional(),
+  cursor: KomisiPetugasEntriWhereUniqueInputSchema.optional(), 
+  take: z.number().optional(),
+  skip: z.number().optional(),
+  distinct: z.union([ KomisiPetugasEntriScalarFieldEnumSchema, KomisiPetugasEntriScalarFieldEnumSchema.array() ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriFindFirstOrThrowArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriFindFirstOrThrowArgs> = z.object({
+  select: KomisiPetugasEntriSelectSchema.optional(),
+  include: KomisiPetugasEntriIncludeSchema.optional(),
+  where: KomisiPetugasEntriWhereInputSchema.optional(), 
+  orderBy: z.union([ KomisiPetugasEntriOrderByWithRelationInputSchema.array(), KomisiPetugasEntriOrderByWithRelationInputSchema ]).optional(),
+  cursor: KomisiPetugasEntriWhereUniqueInputSchema.optional(), 
+  take: z.number().optional(),
+  skip: z.number().optional(),
+  distinct: z.union([ KomisiPetugasEntriScalarFieldEnumSchema, KomisiPetugasEntriScalarFieldEnumSchema.array() ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriFindManyArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriFindManyArgs> = z.object({
+  select: KomisiPetugasEntriSelectSchema.optional(),
+  include: KomisiPetugasEntriIncludeSchema.optional(),
+  where: KomisiPetugasEntriWhereInputSchema.optional(), 
+  orderBy: z.union([ KomisiPetugasEntriOrderByWithRelationInputSchema.array(), KomisiPetugasEntriOrderByWithRelationInputSchema ]).optional(),
+  cursor: KomisiPetugasEntriWhereUniqueInputSchema.optional(), 
+  take: z.number().optional(),
+  skip: z.number().optional(),
+  distinct: z.union([ KomisiPetugasEntriScalarFieldEnumSchema, KomisiPetugasEntriScalarFieldEnumSchema.array() ]).optional(),
+}).strict();
+
+export const KomisiPetugasEntriAggregateArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriAggregateArgs> = z.object({
+  where: KomisiPetugasEntriWhereInputSchema.optional(), 
+  orderBy: z.union([ KomisiPetugasEntriOrderByWithRelationInputSchema.array(), KomisiPetugasEntriOrderByWithRelationInputSchema ]).optional(),
+  cursor: KomisiPetugasEntriWhereUniqueInputSchema.optional(), 
+  take: z.number().optional(),
+  skip: z.number().optional(),
+}).strict();
+
+export const KomisiPetugasEntriGroupByArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriGroupByArgs> = z.object({
+  where: KomisiPetugasEntriWhereInputSchema.optional(), 
+  orderBy: z.union([ KomisiPetugasEntriOrderByWithAggregationInputSchema.array(), KomisiPetugasEntriOrderByWithAggregationInputSchema ]).optional(),
+  by: KomisiPetugasEntriScalarFieldEnumSchema.array(), 
+  having: KomisiPetugasEntriScalarWhereWithAggregatesInputSchema.optional(), 
+  take: z.number().optional(),
+  skip: z.number().optional(),
+}).strict();
+
+export const KomisiPetugasEntriFindUniqueArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriFindUniqueArgs> = z.object({
+  select: KomisiPetugasEntriSelectSchema.optional(),
+  include: KomisiPetugasEntriIncludeSchema.optional(),
+  where: KomisiPetugasEntriWhereUniqueInputSchema, 
+}).strict();
+
+export const KomisiPetugasEntriFindUniqueOrThrowArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriFindUniqueOrThrowArgs> = z.object({
+  select: KomisiPetugasEntriSelectSchema.optional(),
+  include: KomisiPetugasEntriIncludeSchema.optional(),
+  where: KomisiPetugasEntriWhereUniqueInputSchema, 
 }).strict();
 
 export const UserCreateArgsSchema: z.ZodType<Prisma.UserCreateArgs> = z.object({
@@ -36499,7 +38959,7 @@ export const UserCreateArgsSchema: z.ZodType<Prisma.UserCreateArgs> = z.object({
 export const UserUpsertArgsSchema: z.ZodType<Prisma.UserUpsertArgs> = z.object({
   select: UserSelectSchema.optional(),
   include: UserIncludeSchema.optional(),
-  where: UserWhereUniqueInputSchema,
+  where: UserWhereUniqueInputSchema, 
   create: z.union([ UserCreateInputSchema, UserUncheckedCreateInputSchema ]),
   update: z.union([ UserUpdateInputSchema, UserUncheckedUpdateInputSchema ]),
 }).strict();
@@ -36512,23 +38972,23 @@ export const UserCreateManyArgsSchema: z.ZodType<Prisma.UserCreateManyArgs> = z.
 export const UserDeleteArgsSchema: z.ZodType<Prisma.UserDeleteArgs> = z.object({
   select: UserSelectSchema.optional(),
   include: UserIncludeSchema.optional(),
-  where: UserWhereUniqueInputSchema,
+  where: UserWhereUniqueInputSchema, 
 }).strict();
 
 export const UserUpdateArgsSchema: z.ZodType<Prisma.UserUpdateArgs> = z.object({
   select: UserSelectSchema.optional(),
   include: UserIncludeSchema.optional(),
   data: z.union([ UserUpdateInputSchema, UserUncheckedUpdateInputSchema ]),
-  where: UserWhereUniqueInputSchema,
+  where: UserWhereUniqueInputSchema, 
 }).strict();
 
 export const UserUpdateManyArgsSchema: z.ZodType<Prisma.UserUpdateManyArgs> = z.object({
   data: z.union([ UserUpdateManyMutationInputSchema, UserUncheckedUpdateManyInputSchema ]),
-  where: UserWhereInputSchema.optional(),
+  where: UserWhereInputSchema.optional(), 
 }).strict();
 
 export const UserDeleteManyArgsSchema: z.ZodType<Prisma.UserDeleteManyArgs> = z.object({
-  where: UserWhereInputSchema.optional(),
+  where: UserWhereInputSchema.optional(), 
 }).strict();
 
 export const PortalBersamaCreateArgsSchema: z.ZodType<Prisma.PortalBersamaCreateArgs> = z.object({
@@ -36540,7 +39000,7 @@ export const PortalBersamaCreateArgsSchema: z.ZodType<Prisma.PortalBersamaCreate
 export const PortalBersamaUpsertArgsSchema: z.ZodType<Prisma.PortalBersamaUpsertArgs> = z.object({
   select: PortalBersamaSelectSchema.optional(),
   include: PortalBersamaIncludeSchema.optional(),
-  where: PortalBersamaWhereUniqueInputSchema,
+  where: PortalBersamaWhereUniqueInputSchema, 
   create: z.union([ PortalBersamaCreateInputSchema, PortalBersamaUncheckedCreateInputSchema ]),
   update: z.union([ PortalBersamaUpdateInputSchema, PortalBersamaUncheckedUpdateInputSchema ]),
 }).strict();
@@ -36553,23 +39013,23 @@ export const PortalBersamaCreateManyArgsSchema: z.ZodType<Prisma.PortalBersamaCr
 export const PortalBersamaDeleteArgsSchema: z.ZodType<Prisma.PortalBersamaDeleteArgs> = z.object({
   select: PortalBersamaSelectSchema.optional(),
   include: PortalBersamaIncludeSchema.optional(),
-  where: PortalBersamaWhereUniqueInputSchema,
+  where: PortalBersamaWhereUniqueInputSchema, 
 }).strict();
 
 export const PortalBersamaUpdateArgsSchema: z.ZodType<Prisma.PortalBersamaUpdateArgs> = z.object({
   select: PortalBersamaSelectSchema.optional(),
   include: PortalBersamaIncludeSchema.optional(),
   data: z.union([ PortalBersamaUpdateInputSchema, PortalBersamaUncheckedUpdateInputSchema ]),
-  where: PortalBersamaWhereUniqueInputSchema,
+  where: PortalBersamaWhereUniqueInputSchema, 
 }).strict();
 
 export const PortalBersamaUpdateManyArgsSchema: z.ZodType<Prisma.PortalBersamaUpdateManyArgs> = z.object({
   data: z.union([ PortalBersamaUpdateManyMutationInputSchema, PortalBersamaUncheckedUpdateManyInputSchema ]),
-  where: PortalBersamaWhereInputSchema.optional(),
+  where: PortalBersamaWhereInputSchema.optional(), 
 }).strict();
 
 export const PortalBersamaDeleteManyArgsSchema: z.ZodType<Prisma.PortalBersamaDeleteManyArgs> = z.object({
-  where: PortalBersamaWhereInputSchema.optional(),
+  where: PortalBersamaWhereInputSchema.optional(), 
 }).strict();
 
 export const PortalBersamaMitraCreateArgsSchema: z.ZodType<Prisma.PortalBersamaMitraCreateArgs> = z.object({
@@ -36581,7 +39041,7 @@ export const PortalBersamaMitraCreateArgsSchema: z.ZodType<Prisma.PortalBersamaM
 export const PortalBersamaMitraUpsertArgsSchema: z.ZodType<Prisma.PortalBersamaMitraUpsertArgs> = z.object({
   select: PortalBersamaMitraSelectSchema.optional(),
   include: PortalBersamaMitraIncludeSchema.optional(),
-  where: PortalBersamaMitraWhereUniqueInputSchema,
+  where: PortalBersamaMitraWhereUniqueInputSchema, 
   create: z.union([ PortalBersamaMitraCreateInputSchema, PortalBersamaMitraUncheckedCreateInputSchema ]),
   update: z.union([ PortalBersamaMitraUpdateInputSchema, PortalBersamaMitraUncheckedUpdateInputSchema ]),
 }).strict();
@@ -36594,23 +39054,23 @@ export const PortalBersamaMitraCreateManyArgsSchema: z.ZodType<Prisma.PortalBers
 export const PortalBersamaMitraDeleteArgsSchema: z.ZodType<Prisma.PortalBersamaMitraDeleteArgs> = z.object({
   select: PortalBersamaMitraSelectSchema.optional(),
   include: PortalBersamaMitraIncludeSchema.optional(),
-  where: PortalBersamaMitraWhereUniqueInputSchema,
+  where: PortalBersamaMitraWhereUniqueInputSchema, 
 }).strict();
 
 export const PortalBersamaMitraUpdateArgsSchema: z.ZodType<Prisma.PortalBersamaMitraUpdateArgs> = z.object({
   select: PortalBersamaMitraSelectSchema.optional(),
   include: PortalBersamaMitraIncludeSchema.optional(),
   data: z.union([ PortalBersamaMitraUpdateInputSchema, PortalBersamaMitraUncheckedUpdateInputSchema ]),
-  where: PortalBersamaMitraWhereUniqueInputSchema,
+  where: PortalBersamaMitraWhereUniqueInputSchema, 
 }).strict();
 
 export const PortalBersamaMitraUpdateManyArgsSchema: z.ZodType<Prisma.PortalBersamaMitraUpdateManyArgs> = z.object({
   data: z.union([ PortalBersamaMitraUpdateManyMutationInputSchema, PortalBersamaMitraUncheckedUpdateManyInputSchema ]),
-  where: PortalBersamaMitraWhereInputSchema.optional(),
+  where: PortalBersamaMitraWhereInputSchema.optional(), 
 }).strict();
 
 export const PortalBersamaMitraDeleteManyArgsSchema: z.ZodType<Prisma.PortalBersamaMitraDeleteManyArgs> = z.object({
-  where: PortalBersamaMitraWhereInputSchema.optional(),
+  where: PortalBersamaMitraWhereInputSchema.optional(), 
 }).strict();
 
 export const TripayGatewayCreateArgsSchema: z.ZodType<Prisma.TripayGatewayCreateArgs> = z.object({
@@ -36622,7 +39082,7 @@ export const TripayGatewayCreateArgsSchema: z.ZodType<Prisma.TripayGatewayCreate
 export const TripayGatewayUpsertArgsSchema: z.ZodType<Prisma.TripayGatewayUpsertArgs> = z.object({
   select: TripayGatewaySelectSchema.optional(),
   include: TripayGatewayIncludeSchema.optional(),
-  where: TripayGatewayWhereUniqueInputSchema,
+  where: TripayGatewayWhereUniqueInputSchema, 
   create: z.union([ TripayGatewayCreateInputSchema, TripayGatewayUncheckedCreateInputSchema ]),
   update: z.union([ TripayGatewayUpdateInputSchema, TripayGatewayUncheckedUpdateInputSchema ]),
 }).strict();
@@ -36635,23 +39095,23 @@ export const TripayGatewayCreateManyArgsSchema: z.ZodType<Prisma.TripayGatewayCr
 export const TripayGatewayDeleteArgsSchema: z.ZodType<Prisma.TripayGatewayDeleteArgs> = z.object({
   select: TripayGatewaySelectSchema.optional(),
   include: TripayGatewayIncludeSchema.optional(),
-  where: TripayGatewayWhereUniqueInputSchema,
+  where: TripayGatewayWhereUniqueInputSchema, 
 }).strict();
 
 export const TripayGatewayUpdateArgsSchema: z.ZodType<Prisma.TripayGatewayUpdateArgs> = z.object({
   select: TripayGatewaySelectSchema.optional(),
   include: TripayGatewayIncludeSchema.optional(),
   data: z.union([ TripayGatewayUpdateInputSchema, TripayGatewayUncheckedUpdateInputSchema ]),
-  where: TripayGatewayWhereUniqueInputSchema,
+  where: TripayGatewayWhereUniqueInputSchema, 
 }).strict();
 
 export const TripayGatewayUpdateManyArgsSchema: z.ZodType<Prisma.TripayGatewayUpdateManyArgs> = z.object({
   data: z.union([ TripayGatewayUpdateManyMutationInputSchema, TripayGatewayUncheckedUpdateManyInputSchema ]),
-  where: TripayGatewayWhereInputSchema.optional(),
+  where: TripayGatewayWhereInputSchema.optional(), 
 }).strict();
 
 export const TripayGatewayDeleteManyArgsSchema: z.ZodType<Prisma.TripayGatewayDeleteManyArgs> = z.object({
-  where: TripayGatewayWhereInputSchema.optional(),
+  where: TripayGatewayWhereInputSchema.optional(), 
 }).strict();
 
 export const TripayTransaksiCreateArgsSchema: z.ZodType<Prisma.TripayTransaksiCreateArgs> = z.object({
@@ -36663,7 +39123,7 @@ export const TripayTransaksiCreateArgsSchema: z.ZodType<Prisma.TripayTransaksiCr
 export const TripayTransaksiUpsertArgsSchema: z.ZodType<Prisma.TripayTransaksiUpsertArgs> = z.object({
   select: TripayTransaksiSelectSchema.optional(),
   include: TripayTransaksiIncludeSchema.optional(),
-  where: TripayTransaksiWhereUniqueInputSchema,
+  where: TripayTransaksiWhereUniqueInputSchema, 
   create: z.union([ TripayTransaksiCreateInputSchema, TripayTransaksiUncheckedCreateInputSchema ]),
   update: z.union([ TripayTransaksiUpdateInputSchema, TripayTransaksiUncheckedUpdateInputSchema ]),
 }).strict();
@@ -36676,23 +39136,23 @@ export const TripayTransaksiCreateManyArgsSchema: z.ZodType<Prisma.TripayTransak
 export const TripayTransaksiDeleteArgsSchema: z.ZodType<Prisma.TripayTransaksiDeleteArgs> = z.object({
   select: TripayTransaksiSelectSchema.optional(),
   include: TripayTransaksiIncludeSchema.optional(),
-  where: TripayTransaksiWhereUniqueInputSchema,
+  where: TripayTransaksiWhereUniqueInputSchema, 
 }).strict();
 
 export const TripayTransaksiUpdateArgsSchema: z.ZodType<Prisma.TripayTransaksiUpdateArgs> = z.object({
   select: TripayTransaksiSelectSchema.optional(),
   include: TripayTransaksiIncludeSchema.optional(),
   data: z.union([ TripayTransaksiUpdateInputSchema, TripayTransaksiUncheckedUpdateInputSchema ]),
-  where: TripayTransaksiWhereUniqueInputSchema,
+  where: TripayTransaksiWhereUniqueInputSchema, 
 }).strict();
 
 export const TripayTransaksiUpdateManyArgsSchema: z.ZodType<Prisma.TripayTransaksiUpdateManyArgs> = z.object({
   data: z.union([ TripayTransaksiUpdateManyMutationInputSchema, TripayTransaksiUncheckedUpdateManyInputSchema ]),
-  where: TripayTransaksiWhereInputSchema.optional(),
+  where: TripayTransaksiWhereInputSchema.optional(), 
 }).strict();
 
 export const TripayTransaksiDeleteManyArgsSchema: z.ZodType<Prisma.TripayTransaksiDeleteManyArgs> = z.object({
-  where: TripayTransaksiWhereInputSchema.optional(),
+  where: TripayTransaksiWhereInputSchema.optional(), 
 }).strict();
 
 export const ClientCreateArgsSchema: z.ZodType<Prisma.ClientCreateArgs> = z.object({
@@ -36704,7 +39164,7 @@ export const ClientCreateArgsSchema: z.ZodType<Prisma.ClientCreateArgs> = z.obje
 export const ClientUpsertArgsSchema: z.ZodType<Prisma.ClientUpsertArgs> = z.object({
   select: ClientSelectSchema.optional(),
   include: ClientIncludeSchema.optional(),
-  where: ClientWhereUniqueInputSchema,
+  where: ClientWhereUniqueInputSchema, 
   create: z.union([ ClientCreateInputSchema, ClientUncheckedCreateInputSchema ]),
   update: z.union([ ClientUpdateInputSchema, ClientUncheckedUpdateInputSchema ]),
 }).strict();
@@ -36717,23 +39177,23 @@ export const ClientCreateManyArgsSchema: z.ZodType<Prisma.ClientCreateManyArgs> 
 export const ClientDeleteArgsSchema: z.ZodType<Prisma.ClientDeleteArgs> = z.object({
   select: ClientSelectSchema.optional(),
   include: ClientIncludeSchema.optional(),
-  where: ClientWhereUniqueInputSchema,
+  where: ClientWhereUniqueInputSchema, 
 }).strict();
 
 export const ClientUpdateArgsSchema: z.ZodType<Prisma.ClientUpdateArgs> = z.object({
   select: ClientSelectSchema.optional(),
   include: ClientIncludeSchema.optional(),
   data: z.union([ ClientUpdateInputSchema, ClientUncheckedUpdateInputSchema ]),
-  where: ClientWhereUniqueInputSchema,
+  where: ClientWhereUniqueInputSchema, 
 }).strict();
 
 export const ClientUpdateManyArgsSchema: z.ZodType<Prisma.ClientUpdateManyArgs> = z.object({
   data: z.union([ ClientUpdateManyMutationInputSchema, ClientUncheckedUpdateManyInputSchema ]),
-  where: ClientWhereInputSchema.optional(),
+  where: ClientWhereInputSchema.optional(), 
 }).strict();
 
 export const ClientDeleteManyArgsSchema: z.ZodType<Prisma.ClientDeleteManyArgs> = z.object({
-  where: ClientWhereInputSchema.optional(),
+  where: ClientWhereInputSchema.optional(), 
 }).strict();
 
 export const LayananCreateArgsSchema: z.ZodType<Prisma.LayananCreateArgs> = z.object({
@@ -36745,7 +39205,7 @@ export const LayananCreateArgsSchema: z.ZodType<Prisma.LayananCreateArgs> = z.ob
 export const LayananUpsertArgsSchema: z.ZodType<Prisma.LayananUpsertArgs> = z.object({
   select: LayananSelectSchema.optional(),
   include: LayananIncludeSchema.optional(),
-  where: LayananWhereUniqueInputSchema,
+  where: LayananWhereUniqueInputSchema, 
   create: z.union([ LayananCreateInputSchema, LayananUncheckedCreateInputSchema ]),
   update: z.union([ LayananUpdateInputSchema, LayananUncheckedUpdateInputSchema ]),
 }).strict();
@@ -36758,23 +39218,23 @@ export const LayananCreateManyArgsSchema: z.ZodType<Prisma.LayananCreateManyArgs
 export const LayananDeleteArgsSchema: z.ZodType<Prisma.LayananDeleteArgs> = z.object({
   select: LayananSelectSchema.optional(),
   include: LayananIncludeSchema.optional(),
-  where: LayananWhereUniqueInputSchema,
+  where: LayananWhereUniqueInputSchema, 
 }).strict();
 
 export const LayananUpdateArgsSchema: z.ZodType<Prisma.LayananUpdateArgs> = z.object({
   select: LayananSelectSchema.optional(),
   include: LayananIncludeSchema.optional(),
   data: z.union([ LayananUpdateInputSchema, LayananUncheckedUpdateInputSchema ]),
-  where: LayananWhereUniqueInputSchema,
+  where: LayananWhereUniqueInputSchema, 
 }).strict();
 
 export const LayananUpdateManyArgsSchema: z.ZodType<Prisma.LayananUpdateManyArgs> = z.object({
   data: z.union([ LayananUpdateManyMutationInputSchema, LayananUncheckedUpdateManyInputSchema ]),
-  where: LayananWhereInputSchema.optional(),
+  where: LayananWhereInputSchema.optional(), 
 }).strict();
 
 export const LayananDeleteManyArgsSchema: z.ZodType<Prisma.LayananDeleteManyArgs> = z.object({
-  where: LayananWhereInputSchema.optional(),
+  where: LayananWhereInputSchema.optional(), 
 }).strict();
 
 export const ClientPeroranganCreateArgsSchema: z.ZodType<Prisma.ClientPeroranganCreateArgs> = z.object({
@@ -36786,7 +39246,7 @@ export const ClientPeroranganCreateArgsSchema: z.ZodType<Prisma.ClientPerorangan
 export const ClientPeroranganUpsertArgsSchema: z.ZodType<Prisma.ClientPeroranganUpsertArgs> = z.object({
   select: ClientPeroranganSelectSchema.optional(),
   include: ClientPeroranganIncludeSchema.optional(),
-  where: ClientPeroranganWhereUniqueInputSchema,
+  where: ClientPeroranganWhereUniqueInputSchema, 
   create: z.union([ ClientPeroranganCreateInputSchema, ClientPeroranganUncheckedCreateInputSchema ]),
   update: z.union([ ClientPeroranganUpdateInputSchema, ClientPeroranganUncheckedUpdateInputSchema ]),
 }).strict();
@@ -36799,23 +39259,23 @@ export const ClientPeroranganCreateManyArgsSchema: z.ZodType<Prisma.ClientPerora
 export const ClientPeroranganDeleteArgsSchema: z.ZodType<Prisma.ClientPeroranganDeleteArgs> = z.object({
   select: ClientPeroranganSelectSchema.optional(),
   include: ClientPeroranganIncludeSchema.optional(),
-  where: ClientPeroranganWhereUniqueInputSchema,
+  where: ClientPeroranganWhereUniqueInputSchema, 
 }).strict();
 
 export const ClientPeroranganUpdateArgsSchema: z.ZodType<Prisma.ClientPeroranganUpdateArgs> = z.object({
   select: ClientPeroranganSelectSchema.optional(),
   include: ClientPeroranganIncludeSchema.optional(),
   data: z.union([ ClientPeroranganUpdateInputSchema, ClientPeroranganUncheckedUpdateInputSchema ]),
-  where: ClientPeroranganWhereUniqueInputSchema,
+  where: ClientPeroranganWhereUniqueInputSchema, 
 }).strict();
 
 export const ClientPeroranganUpdateManyArgsSchema: z.ZodType<Prisma.ClientPeroranganUpdateManyArgs> = z.object({
   data: z.union([ ClientPeroranganUpdateManyMutationInputSchema, ClientPeroranganUncheckedUpdateManyInputSchema ]),
-  where: ClientPeroranganWhereInputSchema.optional(),
+  where: ClientPeroranganWhereInputSchema.optional(), 
 }).strict();
 
 export const ClientPeroranganDeleteManyArgsSchema: z.ZodType<Prisma.ClientPeroranganDeleteManyArgs> = z.object({
-  where: ClientPeroranganWhereInputSchema.optional(),
+  where: ClientPeroranganWhereInputSchema.optional(), 
 }).strict();
 
 export const SessionCreateArgsSchema: z.ZodType<Prisma.SessionCreateArgs> = z.object({
@@ -36827,7 +39287,7 @@ export const SessionCreateArgsSchema: z.ZodType<Prisma.SessionCreateArgs> = z.ob
 export const SessionUpsertArgsSchema: z.ZodType<Prisma.SessionUpsertArgs> = z.object({
   select: SessionSelectSchema.optional(),
   include: SessionIncludeSchema.optional(),
-  where: SessionWhereUniqueInputSchema,
+  where: SessionWhereUniqueInputSchema, 
   create: z.union([ SessionCreateInputSchema, SessionUncheckedCreateInputSchema ]),
   update: z.union([ SessionUpdateInputSchema, SessionUncheckedUpdateInputSchema ]),
 }).strict();
@@ -36840,23 +39300,23 @@ export const SessionCreateManyArgsSchema: z.ZodType<Prisma.SessionCreateManyArgs
 export const SessionDeleteArgsSchema: z.ZodType<Prisma.SessionDeleteArgs> = z.object({
   select: SessionSelectSchema.optional(),
   include: SessionIncludeSchema.optional(),
-  where: SessionWhereUniqueInputSchema,
+  where: SessionWhereUniqueInputSchema, 
 }).strict();
 
 export const SessionUpdateArgsSchema: z.ZodType<Prisma.SessionUpdateArgs> = z.object({
   select: SessionSelectSchema.optional(),
   include: SessionIncludeSchema.optional(),
   data: z.union([ SessionUpdateInputSchema, SessionUncheckedUpdateInputSchema ]),
-  where: SessionWhereUniqueInputSchema,
+  where: SessionWhereUniqueInputSchema, 
 }).strict();
 
 export const SessionUpdateManyArgsSchema: z.ZodType<Prisma.SessionUpdateManyArgs> = z.object({
   data: z.union([ SessionUpdateManyMutationInputSchema, SessionUncheckedUpdateManyInputSchema ]),
-  where: SessionWhereInputSchema.optional(),
+  where: SessionWhereInputSchema.optional(), 
 }).strict();
 
 export const SessionDeleteManyArgsSchema: z.ZodType<Prisma.SessionDeleteManyArgs> = z.object({
-  where: SessionWhereInputSchema.optional(),
+  where: SessionWhereInputSchema.optional(), 
 }).strict();
 
 export const RouterCreateArgsSchema: z.ZodType<Prisma.RouterCreateArgs> = z.object({
@@ -36868,7 +39328,7 @@ export const RouterCreateArgsSchema: z.ZodType<Prisma.RouterCreateArgs> = z.obje
 export const RouterUpsertArgsSchema: z.ZodType<Prisma.RouterUpsertArgs> = z.object({
   select: RouterSelectSchema.optional(),
   include: RouterIncludeSchema.optional(),
-  where: RouterWhereUniqueInputSchema,
+  where: RouterWhereUniqueInputSchema, 
   create: z.union([ RouterCreateInputSchema, RouterUncheckedCreateInputSchema ]),
   update: z.union([ RouterUpdateInputSchema, RouterUncheckedUpdateInputSchema ]),
 }).strict();
@@ -36881,23 +39341,23 @@ export const RouterCreateManyArgsSchema: z.ZodType<Prisma.RouterCreateManyArgs> 
 export const RouterDeleteArgsSchema: z.ZodType<Prisma.RouterDeleteArgs> = z.object({
   select: RouterSelectSchema.optional(),
   include: RouterIncludeSchema.optional(),
-  where: RouterWhereUniqueInputSchema,
+  where: RouterWhereUniqueInputSchema, 
 }).strict();
 
 export const RouterUpdateArgsSchema: z.ZodType<Prisma.RouterUpdateArgs> = z.object({
   select: RouterSelectSchema.optional(),
   include: RouterIncludeSchema.optional(),
   data: z.union([ RouterUpdateInputSchema, RouterUncheckedUpdateInputSchema ]),
-  where: RouterWhereUniqueInputSchema,
+  where: RouterWhereUniqueInputSchema, 
 }).strict();
 
 export const RouterUpdateManyArgsSchema: z.ZodType<Prisma.RouterUpdateManyArgs> = z.object({
   data: z.union([ RouterUpdateManyMutationInputSchema, RouterUncheckedUpdateManyInputSchema ]),
-  where: RouterWhereInputSchema.optional(),
+  where: RouterWhereInputSchema.optional(), 
 }).strict();
 
 export const RouterDeleteManyArgsSchema: z.ZodType<Prisma.RouterDeleteManyArgs> = z.object({
-  where: RouterWhereInputSchema.optional(),
+  where: RouterWhereInputSchema.optional(), 
 }).strict();
 
 export const PelangganCreateArgsSchema: z.ZodType<Prisma.PelangganCreateArgs> = z.object({
@@ -36909,7 +39369,7 @@ export const PelangganCreateArgsSchema: z.ZodType<Prisma.PelangganCreateArgs> = 
 export const PelangganUpsertArgsSchema: z.ZodType<Prisma.PelangganUpsertArgs> = z.object({
   select: PelangganSelectSchema.optional(),
   include: PelangganIncludeSchema.optional(),
-  where: PelangganWhereUniqueInputSchema,
+  where: PelangganWhereUniqueInputSchema, 
   create: z.union([ PelangganCreateInputSchema, PelangganUncheckedCreateInputSchema ]),
   update: z.union([ PelangganUpdateInputSchema, PelangganUncheckedUpdateInputSchema ]),
 }).strict();
@@ -36922,23 +39382,23 @@ export const PelangganCreateManyArgsSchema: z.ZodType<Prisma.PelangganCreateMany
 export const PelangganDeleteArgsSchema: z.ZodType<Prisma.PelangganDeleteArgs> = z.object({
   select: PelangganSelectSchema.optional(),
   include: PelangganIncludeSchema.optional(),
-  where: PelangganWhereUniqueInputSchema,
+  where: PelangganWhereUniqueInputSchema, 
 }).strict();
 
 export const PelangganUpdateArgsSchema: z.ZodType<Prisma.PelangganUpdateArgs> = z.object({
   select: PelangganSelectSchema.optional(),
   include: PelangganIncludeSchema.optional(),
   data: z.union([ PelangganUpdateInputSchema, PelangganUncheckedUpdateInputSchema ]),
-  where: PelangganWhereUniqueInputSchema,
+  where: PelangganWhereUniqueInputSchema, 
 }).strict();
 
 export const PelangganUpdateManyArgsSchema: z.ZodType<Prisma.PelangganUpdateManyArgs> = z.object({
   data: z.union([ PelangganUpdateManyMutationInputSchema, PelangganUncheckedUpdateManyInputSchema ]),
-  where: PelangganWhereInputSchema.optional(),
+  where: PelangganWhereInputSchema.optional(), 
 }).strict();
 
 export const PelangganDeleteManyArgsSchema: z.ZodType<Prisma.PelangganDeleteManyArgs> = z.object({
-  where: PelangganWhereInputSchema.optional(),
+  where: PelangganWhereInputSchema.optional(), 
 }).strict();
 
 export const StaffPelangganScopeCreateArgsSchema: z.ZodType<Prisma.StaffPelangganScopeCreateArgs> = z.object({
@@ -36950,7 +39410,7 @@ export const StaffPelangganScopeCreateArgsSchema: z.ZodType<Prisma.StaffPelangga
 export const StaffPelangganScopeUpsertArgsSchema: z.ZodType<Prisma.StaffPelangganScopeUpsertArgs> = z.object({
   select: StaffPelangganScopeSelectSchema.optional(),
   include: StaffPelangganScopeIncludeSchema.optional(),
-  where: StaffPelangganScopeWhereUniqueInputSchema,
+  where: StaffPelangganScopeWhereUniqueInputSchema, 
   create: z.union([ StaffPelangganScopeCreateInputSchema, StaffPelangganScopeUncheckedCreateInputSchema ]),
   update: z.union([ StaffPelangganScopeUpdateInputSchema, StaffPelangganScopeUncheckedUpdateInputSchema ]),
 }).strict();
@@ -36963,23 +39423,23 @@ export const StaffPelangganScopeCreateManyArgsSchema: z.ZodType<Prisma.StaffPela
 export const StaffPelangganScopeDeleteArgsSchema: z.ZodType<Prisma.StaffPelangganScopeDeleteArgs> = z.object({
   select: StaffPelangganScopeSelectSchema.optional(),
   include: StaffPelangganScopeIncludeSchema.optional(),
-  where: StaffPelangganScopeWhereUniqueInputSchema,
+  where: StaffPelangganScopeWhereUniqueInputSchema, 
 }).strict();
 
 export const StaffPelangganScopeUpdateArgsSchema: z.ZodType<Prisma.StaffPelangganScopeUpdateArgs> = z.object({
   select: StaffPelangganScopeSelectSchema.optional(),
   include: StaffPelangganScopeIncludeSchema.optional(),
   data: z.union([ StaffPelangganScopeUpdateInputSchema, StaffPelangganScopeUncheckedUpdateInputSchema ]),
-  where: StaffPelangganScopeWhereUniqueInputSchema,
+  where: StaffPelangganScopeWhereUniqueInputSchema, 
 }).strict();
 
 export const StaffPelangganScopeUpdateManyArgsSchema: z.ZodType<Prisma.StaffPelangganScopeUpdateManyArgs> = z.object({
   data: z.union([ StaffPelangganScopeUpdateManyMutationInputSchema, StaffPelangganScopeUncheckedUpdateManyInputSchema ]),
-  where: StaffPelangganScopeWhereInputSchema.optional(),
+  where: StaffPelangganScopeWhereInputSchema.optional(), 
 }).strict();
 
 export const StaffPelangganScopeDeleteManyArgsSchema: z.ZodType<Prisma.StaffPelangganScopeDeleteManyArgs> = z.object({
-  where: StaffPelangganScopeWhereInputSchema.optional(),
+  where: StaffPelangganScopeWhereInputSchema.optional(), 
 }).strict();
 
 export const PppSyncCreateArgsSchema: z.ZodType<Prisma.PppSyncCreateArgs> = z.object({
@@ -36989,7 +39449,7 @@ export const PppSyncCreateArgsSchema: z.ZodType<Prisma.PppSyncCreateArgs> = z.ob
 
 export const PppSyncUpsertArgsSchema: z.ZodType<Prisma.PppSyncUpsertArgs> = z.object({
   select: PppSyncSelectSchema.optional(),
-  where: PppSyncWhereUniqueInputSchema,
+  where: PppSyncWhereUniqueInputSchema, 
   create: z.union([ PppSyncCreateInputSchema, PppSyncUncheckedCreateInputSchema ]),
   update: z.union([ PppSyncUpdateInputSchema, PppSyncUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37001,22 +39461,22 @@ export const PppSyncCreateManyArgsSchema: z.ZodType<Prisma.PppSyncCreateManyArgs
 
 export const PppSyncDeleteArgsSchema: z.ZodType<Prisma.PppSyncDeleteArgs> = z.object({
   select: PppSyncSelectSchema.optional(),
-  where: PppSyncWhereUniqueInputSchema,
+  where: PppSyncWhereUniqueInputSchema, 
 }).strict();
 
 export const PppSyncUpdateArgsSchema: z.ZodType<Prisma.PppSyncUpdateArgs> = z.object({
   select: PppSyncSelectSchema.optional(),
   data: z.union([ PppSyncUpdateInputSchema, PppSyncUncheckedUpdateInputSchema ]),
-  where: PppSyncWhereUniqueInputSchema,
+  where: PppSyncWhereUniqueInputSchema, 
 }).strict();
 
 export const PppSyncUpdateManyArgsSchema: z.ZodType<Prisma.PppSyncUpdateManyArgs> = z.object({
   data: z.union([ PppSyncUpdateManyMutationInputSchema, PppSyncUncheckedUpdateManyInputSchema ]),
-  where: PppSyncWhereInputSchema.optional(),
+  where: PppSyncWhereInputSchema.optional(), 
 }).strict();
 
 export const PppSyncDeleteManyArgsSchema: z.ZodType<Prisma.PppSyncDeleteManyArgs> = z.object({
-  where: PppSyncWhereInputSchema.optional(),
+  where: PppSyncWhereInputSchema.optional(), 
 }).strict();
 
 export const PppSecretCreateArgsSchema: z.ZodType<Prisma.PppSecretCreateArgs> = z.object({
@@ -37028,7 +39488,7 @@ export const PppSecretCreateArgsSchema: z.ZodType<Prisma.PppSecretCreateArgs> = 
 export const PppSecretUpsertArgsSchema: z.ZodType<Prisma.PppSecretUpsertArgs> = z.object({
   select: PppSecretSelectSchema.optional(),
   include: PppSecretIncludeSchema.optional(),
-  where: PppSecretWhereUniqueInputSchema,
+  where: PppSecretWhereUniqueInputSchema, 
   create: z.union([ PppSecretCreateInputSchema, PppSecretUncheckedCreateInputSchema ]),
   update: z.union([ PppSecretUpdateInputSchema, PppSecretUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37041,23 +39501,23 @@ export const PppSecretCreateManyArgsSchema: z.ZodType<Prisma.PppSecretCreateMany
 export const PppSecretDeleteArgsSchema: z.ZodType<Prisma.PppSecretDeleteArgs> = z.object({
   select: PppSecretSelectSchema.optional(),
   include: PppSecretIncludeSchema.optional(),
-  where: PppSecretWhereUniqueInputSchema,
+  where: PppSecretWhereUniqueInputSchema, 
 }).strict();
 
 export const PppSecretUpdateArgsSchema: z.ZodType<Prisma.PppSecretUpdateArgs> = z.object({
   select: PppSecretSelectSchema.optional(),
   include: PppSecretIncludeSchema.optional(),
   data: z.union([ PppSecretUpdateInputSchema, PppSecretUncheckedUpdateInputSchema ]),
-  where: PppSecretWhereUniqueInputSchema,
+  where: PppSecretWhereUniqueInputSchema, 
 }).strict();
 
 export const PppSecretUpdateManyArgsSchema: z.ZodType<Prisma.PppSecretUpdateManyArgs> = z.object({
   data: z.union([ PppSecretUpdateManyMutationInputSchema, PppSecretUncheckedUpdateManyInputSchema ]),
-  where: PppSecretWhereInputSchema.optional(),
+  where: PppSecretWhereInputSchema.optional(), 
 }).strict();
 
 export const PppSecretDeleteManyArgsSchema: z.ZodType<Prisma.PppSecretDeleteManyArgs> = z.object({
-  where: PppSecretWhereInputSchema.optional(),
+  where: PppSecretWhereInputSchema.optional(), 
 }).strict();
 
 export const PppPackageChangeCreateArgsSchema: z.ZodType<Prisma.PppPackageChangeCreateArgs> = z.object({
@@ -37069,7 +39529,7 @@ export const PppPackageChangeCreateArgsSchema: z.ZodType<Prisma.PppPackageChange
 export const PppPackageChangeUpsertArgsSchema: z.ZodType<Prisma.PppPackageChangeUpsertArgs> = z.object({
   select: PppPackageChangeSelectSchema.optional(),
   include: PppPackageChangeIncludeSchema.optional(),
-  where: PppPackageChangeWhereUniqueInputSchema,
+  where: PppPackageChangeWhereUniqueInputSchema, 
   create: z.union([ PppPackageChangeCreateInputSchema, PppPackageChangeUncheckedCreateInputSchema ]),
   update: z.union([ PppPackageChangeUpdateInputSchema, PppPackageChangeUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37082,23 +39542,23 @@ export const PppPackageChangeCreateManyArgsSchema: z.ZodType<Prisma.PppPackageCh
 export const PppPackageChangeDeleteArgsSchema: z.ZodType<Prisma.PppPackageChangeDeleteArgs> = z.object({
   select: PppPackageChangeSelectSchema.optional(),
   include: PppPackageChangeIncludeSchema.optional(),
-  where: PppPackageChangeWhereUniqueInputSchema,
+  where: PppPackageChangeWhereUniqueInputSchema, 
 }).strict();
 
 export const PppPackageChangeUpdateArgsSchema: z.ZodType<Prisma.PppPackageChangeUpdateArgs> = z.object({
   select: PppPackageChangeSelectSchema.optional(),
   include: PppPackageChangeIncludeSchema.optional(),
   data: z.union([ PppPackageChangeUpdateInputSchema, PppPackageChangeUncheckedUpdateInputSchema ]),
-  where: PppPackageChangeWhereUniqueInputSchema,
+  where: PppPackageChangeWhereUniqueInputSchema, 
 }).strict();
 
 export const PppPackageChangeUpdateManyArgsSchema: z.ZodType<Prisma.PppPackageChangeUpdateManyArgs> = z.object({
   data: z.union([ PppPackageChangeUpdateManyMutationInputSchema, PppPackageChangeUncheckedUpdateManyInputSchema ]),
-  where: PppPackageChangeWhereInputSchema.optional(),
+  where: PppPackageChangeWhereInputSchema.optional(), 
 }).strict();
 
 export const PppPackageChangeDeleteManyArgsSchema: z.ZodType<Prisma.PppPackageChangeDeleteManyArgs> = z.object({
-  where: PppPackageChangeWhereInputSchema.optional(),
+  where: PppPackageChangeWhereInputSchema.optional(), 
 }).strict();
 
 export const PppBoosterCreateArgsSchema: z.ZodType<Prisma.PppBoosterCreateArgs> = z.object({
@@ -37110,7 +39570,7 @@ export const PppBoosterCreateArgsSchema: z.ZodType<Prisma.PppBoosterCreateArgs> 
 export const PppBoosterUpsertArgsSchema: z.ZodType<Prisma.PppBoosterUpsertArgs> = z.object({
   select: PppBoosterSelectSchema.optional(),
   include: PppBoosterIncludeSchema.optional(),
-  where: PppBoosterWhereUniqueInputSchema,
+  where: PppBoosterWhereUniqueInputSchema, 
   create: z.union([ PppBoosterCreateInputSchema, PppBoosterUncheckedCreateInputSchema ]),
   update: z.union([ PppBoosterUpdateInputSchema, PppBoosterUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37123,23 +39583,23 @@ export const PppBoosterCreateManyArgsSchema: z.ZodType<Prisma.PppBoosterCreateMa
 export const PppBoosterDeleteArgsSchema: z.ZodType<Prisma.PppBoosterDeleteArgs> = z.object({
   select: PppBoosterSelectSchema.optional(),
   include: PppBoosterIncludeSchema.optional(),
-  where: PppBoosterWhereUniqueInputSchema,
+  where: PppBoosterWhereUniqueInputSchema, 
 }).strict();
 
 export const PppBoosterUpdateArgsSchema: z.ZodType<Prisma.PppBoosterUpdateArgs> = z.object({
   select: PppBoosterSelectSchema.optional(),
   include: PppBoosterIncludeSchema.optional(),
   data: z.union([ PppBoosterUpdateInputSchema, PppBoosterUncheckedUpdateInputSchema ]),
-  where: PppBoosterWhereUniqueInputSchema,
+  where: PppBoosterWhereUniqueInputSchema, 
 }).strict();
 
 export const PppBoosterUpdateManyArgsSchema: z.ZodType<Prisma.PppBoosterUpdateManyArgs> = z.object({
   data: z.union([ PppBoosterUpdateManyMutationInputSchema, PppBoosterUncheckedUpdateManyInputSchema ]),
-  where: PppBoosterWhereInputSchema.optional(),
+  where: PppBoosterWhereInputSchema.optional(), 
 }).strict();
 
 export const PppBoosterDeleteManyArgsSchema: z.ZodType<Prisma.PppBoosterDeleteManyArgs> = z.object({
-  where: PppBoosterWhereInputSchema.optional(),
+  where: PppBoosterWhereInputSchema.optional(), 
 }).strict();
 
 export const PppActiveCreateArgsSchema: z.ZodType<Prisma.PppActiveCreateArgs> = z.object({
@@ -37151,7 +39611,7 @@ export const PppActiveCreateArgsSchema: z.ZodType<Prisma.PppActiveCreateArgs> = 
 export const PppActiveUpsertArgsSchema: z.ZodType<Prisma.PppActiveUpsertArgs> = z.object({
   select: PppActiveSelectSchema.optional(),
   include: PppActiveIncludeSchema.optional(),
-  where: PppActiveWhereUniqueInputSchema,
+  where: PppActiveWhereUniqueInputSchema, 
   create: z.union([ PppActiveCreateInputSchema, PppActiveUncheckedCreateInputSchema ]),
   update: z.union([ PppActiveUpdateInputSchema, PppActiveUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37164,23 +39624,23 @@ export const PppActiveCreateManyArgsSchema: z.ZodType<Prisma.PppActiveCreateMany
 export const PppActiveDeleteArgsSchema: z.ZodType<Prisma.PppActiveDeleteArgs> = z.object({
   select: PppActiveSelectSchema.optional(),
   include: PppActiveIncludeSchema.optional(),
-  where: PppActiveWhereUniqueInputSchema,
+  where: PppActiveWhereUniqueInputSchema, 
 }).strict();
 
 export const PppActiveUpdateArgsSchema: z.ZodType<Prisma.PppActiveUpdateArgs> = z.object({
   select: PppActiveSelectSchema.optional(),
   include: PppActiveIncludeSchema.optional(),
   data: z.union([ PppActiveUpdateInputSchema, PppActiveUncheckedUpdateInputSchema ]),
-  where: PppActiveWhereUniqueInputSchema,
+  where: PppActiveWhereUniqueInputSchema, 
 }).strict();
 
 export const PppActiveUpdateManyArgsSchema: z.ZodType<Prisma.PppActiveUpdateManyArgs> = z.object({
   data: z.union([ PppActiveUpdateManyMutationInputSchema, PppActiveUncheckedUpdateManyInputSchema ]),
-  where: PppActiveWhereInputSchema.optional(),
+  where: PppActiveWhereInputSchema.optional(), 
 }).strict();
 
 export const PppActiveDeleteManyArgsSchema: z.ZodType<Prisma.PppActiveDeleteManyArgs> = z.object({
-  where: PppActiveWhereInputSchema.optional(),
+  where: PppActiveWhereInputSchema.optional(), 
 }).strict();
 
 export const PaketCreateArgsSchema: z.ZodType<Prisma.PaketCreateArgs> = z.object({
@@ -37192,7 +39652,7 @@ export const PaketCreateArgsSchema: z.ZodType<Prisma.PaketCreateArgs> = z.object
 export const PaketUpsertArgsSchema: z.ZodType<Prisma.PaketUpsertArgs> = z.object({
   select: PaketSelectSchema.optional(),
   include: PaketIncludeSchema.optional(),
-  where: PaketWhereUniqueInputSchema,
+  where: PaketWhereUniqueInputSchema, 
   create: z.union([ PaketCreateInputSchema, PaketUncheckedCreateInputSchema ]),
   update: z.union([ PaketUpdateInputSchema, PaketUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37205,23 +39665,23 @@ export const PaketCreateManyArgsSchema: z.ZodType<Prisma.PaketCreateManyArgs> = 
 export const PaketDeleteArgsSchema: z.ZodType<Prisma.PaketDeleteArgs> = z.object({
   select: PaketSelectSchema.optional(),
   include: PaketIncludeSchema.optional(),
-  where: PaketWhereUniqueInputSchema,
+  where: PaketWhereUniqueInputSchema, 
 }).strict();
 
 export const PaketUpdateArgsSchema: z.ZodType<Prisma.PaketUpdateArgs> = z.object({
   select: PaketSelectSchema.optional(),
   include: PaketIncludeSchema.optional(),
   data: z.union([ PaketUpdateInputSchema, PaketUncheckedUpdateInputSchema ]),
-  where: PaketWhereUniqueInputSchema,
+  where: PaketWhereUniqueInputSchema, 
 }).strict();
 
 export const PaketUpdateManyArgsSchema: z.ZodType<Prisma.PaketUpdateManyArgs> = z.object({
   data: z.union([ PaketUpdateManyMutationInputSchema, PaketUncheckedUpdateManyInputSchema ]),
-  where: PaketWhereInputSchema.optional(),
+  where: PaketWhereInputSchema.optional(), 
 }).strict();
 
 export const PaketDeleteManyArgsSchema: z.ZodType<Prisma.PaketDeleteManyArgs> = z.object({
-  where: PaketWhereInputSchema.optional(),
+  where: PaketWhereInputSchema.optional(), 
 }).strict();
 
 export const PaketRouterCreateArgsSchema: z.ZodType<Prisma.PaketRouterCreateArgs> = z.object({
@@ -37233,7 +39693,7 @@ export const PaketRouterCreateArgsSchema: z.ZodType<Prisma.PaketRouterCreateArgs
 export const PaketRouterUpsertArgsSchema: z.ZodType<Prisma.PaketRouterUpsertArgs> = z.object({
   select: PaketRouterSelectSchema.optional(),
   include: PaketRouterIncludeSchema.optional(),
-  where: PaketRouterWhereUniqueInputSchema,
+  where: PaketRouterWhereUniqueInputSchema, 
   create: z.union([ PaketRouterCreateInputSchema, PaketRouterUncheckedCreateInputSchema ]),
   update: z.union([ PaketRouterUpdateInputSchema, PaketRouterUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37246,23 +39706,23 @@ export const PaketRouterCreateManyArgsSchema: z.ZodType<Prisma.PaketRouterCreate
 export const PaketRouterDeleteArgsSchema: z.ZodType<Prisma.PaketRouterDeleteArgs> = z.object({
   select: PaketRouterSelectSchema.optional(),
   include: PaketRouterIncludeSchema.optional(),
-  where: PaketRouterWhereUniqueInputSchema,
+  where: PaketRouterWhereUniqueInputSchema, 
 }).strict();
 
 export const PaketRouterUpdateArgsSchema: z.ZodType<Prisma.PaketRouterUpdateArgs> = z.object({
   select: PaketRouterSelectSchema.optional(),
   include: PaketRouterIncludeSchema.optional(),
   data: z.union([ PaketRouterUpdateInputSchema, PaketRouterUncheckedUpdateInputSchema ]),
-  where: PaketRouterWhereUniqueInputSchema,
+  where: PaketRouterWhereUniqueInputSchema, 
 }).strict();
 
 export const PaketRouterUpdateManyArgsSchema: z.ZodType<Prisma.PaketRouterUpdateManyArgs> = z.object({
   data: z.union([ PaketRouterUpdateManyMutationInputSchema, PaketRouterUncheckedUpdateManyInputSchema ]),
-  where: PaketRouterWhereInputSchema.optional(),
+  where: PaketRouterWhereInputSchema.optional(), 
 }).strict();
 
 export const PaketRouterDeleteManyArgsSchema: z.ZodType<Prisma.PaketRouterDeleteManyArgs> = z.object({
-  where: PaketRouterWhereInputSchema.optional(),
+  where: PaketRouterWhereInputSchema.optional(), 
 }).strict();
 
 export const BankCreateArgsSchema: z.ZodType<Prisma.BankCreateArgs> = z.object({
@@ -37274,7 +39734,7 @@ export const BankCreateArgsSchema: z.ZodType<Prisma.BankCreateArgs> = z.object({
 export const BankUpsertArgsSchema: z.ZodType<Prisma.BankUpsertArgs> = z.object({
   select: BankSelectSchema.optional(),
   include: BankIncludeSchema.optional(),
-  where: BankWhereUniqueInputSchema,
+  where: BankWhereUniqueInputSchema, 
   create: z.union([ BankCreateInputSchema, BankUncheckedCreateInputSchema ]),
   update: z.union([ BankUpdateInputSchema, BankUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37287,23 +39747,23 @@ export const BankCreateManyArgsSchema: z.ZodType<Prisma.BankCreateManyArgs> = z.
 export const BankDeleteArgsSchema: z.ZodType<Prisma.BankDeleteArgs> = z.object({
   select: BankSelectSchema.optional(),
   include: BankIncludeSchema.optional(),
-  where: BankWhereUniqueInputSchema,
+  where: BankWhereUniqueInputSchema, 
 }).strict();
 
 export const BankUpdateArgsSchema: z.ZodType<Prisma.BankUpdateArgs> = z.object({
   select: BankSelectSchema.optional(),
   include: BankIncludeSchema.optional(),
   data: z.union([ BankUpdateInputSchema, BankUncheckedUpdateInputSchema ]),
-  where: BankWhereUniqueInputSchema,
+  where: BankWhereUniqueInputSchema, 
 }).strict();
 
 export const BankUpdateManyArgsSchema: z.ZodType<Prisma.BankUpdateManyArgs> = z.object({
   data: z.union([ BankUpdateManyMutationInputSchema, BankUncheckedUpdateManyInputSchema ]),
-  where: BankWhereInputSchema.optional(),
+  where: BankWhereInputSchema.optional(), 
 }).strict();
 
 export const BankDeleteManyArgsSchema: z.ZodType<Prisma.BankDeleteManyArgs> = z.object({
-  where: BankWhereInputSchema.optional(),
+  where: BankWhereInputSchema.optional(), 
 }).strict();
 
 export const TagihanDihapusCreateArgsSchema: z.ZodType<Prisma.TagihanDihapusCreateArgs> = z.object({
@@ -37315,7 +39775,7 @@ export const TagihanDihapusCreateArgsSchema: z.ZodType<Prisma.TagihanDihapusCrea
 export const TagihanDihapusUpsertArgsSchema: z.ZodType<Prisma.TagihanDihapusUpsertArgs> = z.object({
   select: TagihanDihapusSelectSchema.optional(),
   include: TagihanDihapusIncludeSchema.optional(),
-  where: TagihanDihapusWhereUniqueInputSchema,
+  where: TagihanDihapusWhereUniqueInputSchema, 
   create: z.union([ TagihanDihapusCreateInputSchema, TagihanDihapusUncheckedCreateInputSchema ]),
   update: z.union([ TagihanDihapusUpdateInputSchema, TagihanDihapusUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37328,23 +39788,23 @@ export const TagihanDihapusCreateManyArgsSchema: z.ZodType<Prisma.TagihanDihapus
 export const TagihanDihapusDeleteArgsSchema: z.ZodType<Prisma.TagihanDihapusDeleteArgs> = z.object({
   select: TagihanDihapusSelectSchema.optional(),
   include: TagihanDihapusIncludeSchema.optional(),
-  where: TagihanDihapusWhereUniqueInputSchema,
+  where: TagihanDihapusWhereUniqueInputSchema, 
 }).strict();
 
 export const TagihanDihapusUpdateArgsSchema: z.ZodType<Prisma.TagihanDihapusUpdateArgs> = z.object({
   select: TagihanDihapusSelectSchema.optional(),
   include: TagihanDihapusIncludeSchema.optional(),
   data: z.union([ TagihanDihapusUpdateInputSchema, TagihanDihapusUncheckedUpdateInputSchema ]),
-  where: TagihanDihapusWhereUniqueInputSchema,
+  where: TagihanDihapusWhereUniqueInputSchema, 
 }).strict();
 
 export const TagihanDihapusUpdateManyArgsSchema: z.ZodType<Prisma.TagihanDihapusUpdateManyArgs> = z.object({
   data: z.union([ TagihanDihapusUpdateManyMutationInputSchema, TagihanDihapusUncheckedUpdateManyInputSchema ]),
-  where: TagihanDihapusWhereInputSchema.optional(),
+  where: TagihanDihapusWhereInputSchema.optional(), 
 }).strict();
 
 export const TagihanDihapusDeleteManyArgsSchema: z.ZodType<Prisma.TagihanDihapusDeleteManyArgs> = z.object({
-  where: TagihanDihapusWhereInputSchema.optional(),
+  where: TagihanDihapusWhereInputSchema.optional(), 
 }).strict();
 
 export const PembayaranCreateArgsSchema: z.ZodType<Prisma.PembayaranCreateArgs> = z.object({
@@ -37356,7 +39816,7 @@ export const PembayaranCreateArgsSchema: z.ZodType<Prisma.PembayaranCreateArgs> 
 export const PembayaranUpsertArgsSchema: z.ZodType<Prisma.PembayaranUpsertArgs> = z.object({
   select: PembayaranSelectSchema.optional(),
   include: PembayaranIncludeSchema.optional(),
-  where: PembayaranWhereUniqueInputSchema,
+  where: PembayaranWhereUniqueInputSchema, 
   create: z.union([ PembayaranCreateInputSchema, PembayaranUncheckedCreateInputSchema ]),
   update: z.union([ PembayaranUpdateInputSchema, PembayaranUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37369,23 +39829,23 @@ export const PembayaranCreateManyArgsSchema: z.ZodType<Prisma.PembayaranCreateMa
 export const PembayaranDeleteArgsSchema: z.ZodType<Prisma.PembayaranDeleteArgs> = z.object({
   select: PembayaranSelectSchema.optional(),
   include: PembayaranIncludeSchema.optional(),
-  where: PembayaranWhereUniqueInputSchema,
+  where: PembayaranWhereUniqueInputSchema, 
 }).strict();
 
 export const PembayaranUpdateArgsSchema: z.ZodType<Prisma.PembayaranUpdateArgs> = z.object({
   select: PembayaranSelectSchema.optional(),
   include: PembayaranIncludeSchema.optional(),
   data: z.union([ PembayaranUpdateInputSchema, PembayaranUncheckedUpdateInputSchema ]),
-  where: PembayaranWhereUniqueInputSchema,
+  where: PembayaranWhereUniqueInputSchema, 
 }).strict();
 
 export const PembayaranUpdateManyArgsSchema: z.ZodType<Prisma.PembayaranUpdateManyArgs> = z.object({
   data: z.union([ PembayaranUpdateManyMutationInputSchema, PembayaranUncheckedUpdateManyInputSchema ]),
-  where: PembayaranWhereInputSchema.optional(),
+  where: PembayaranWhereInputSchema.optional(), 
 }).strict();
 
 export const PembayaranDeleteManyArgsSchema: z.ZodType<Prisma.PembayaranDeleteManyArgs> = z.object({
-  where: PembayaranWhereInputSchema.optional(),
+  where: PembayaranWhereInputSchema.optional(), 
 }).strict();
 
 export const LogBayarCreateArgsSchema: z.ZodType<Prisma.LogBayarCreateArgs> = z.object({
@@ -37397,7 +39857,7 @@ export const LogBayarCreateArgsSchema: z.ZodType<Prisma.LogBayarCreateArgs> = z.
 export const LogBayarUpsertArgsSchema: z.ZodType<Prisma.LogBayarUpsertArgs> = z.object({
   select: LogBayarSelectSchema.optional(),
   include: LogBayarIncludeSchema.optional(),
-  where: LogBayarWhereUniqueInputSchema,
+  where: LogBayarWhereUniqueInputSchema, 
   create: z.union([ LogBayarCreateInputSchema, LogBayarUncheckedCreateInputSchema ]),
   update: z.union([ LogBayarUpdateInputSchema, LogBayarUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37410,23 +39870,23 @@ export const LogBayarCreateManyArgsSchema: z.ZodType<Prisma.LogBayarCreateManyAr
 export const LogBayarDeleteArgsSchema: z.ZodType<Prisma.LogBayarDeleteArgs> = z.object({
   select: LogBayarSelectSchema.optional(),
   include: LogBayarIncludeSchema.optional(),
-  where: LogBayarWhereUniqueInputSchema,
+  where: LogBayarWhereUniqueInputSchema, 
 }).strict();
 
 export const LogBayarUpdateArgsSchema: z.ZodType<Prisma.LogBayarUpdateArgs> = z.object({
   select: LogBayarSelectSchema.optional(),
   include: LogBayarIncludeSchema.optional(),
   data: z.union([ LogBayarUpdateInputSchema, LogBayarUncheckedUpdateInputSchema ]),
-  where: LogBayarWhereUniqueInputSchema,
+  where: LogBayarWhereUniqueInputSchema, 
 }).strict();
 
 export const LogBayarUpdateManyArgsSchema: z.ZodType<Prisma.LogBayarUpdateManyArgs> = z.object({
   data: z.union([ LogBayarUpdateManyMutationInputSchema, LogBayarUncheckedUpdateManyInputSchema ]),
-  where: LogBayarWhereInputSchema.optional(),
+  where: LogBayarWhereInputSchema.optional(), 
 }).strict();
 
 export const LogBayarDeleteManyArgsSchema: z.ZodType<Prisma.LogBayarDeleteManyArgs> = z.object({
-  where: LogBayarWhereInputSchema.optional(),
+  where: LogBayarWhereInputSchema.optional(), 
 }).strict();
 
 export const PembayaranMitraCreateArgsSchema: z.ZodType<Prisma.PembayaranMitraCreateArgs> = z.object({
@@ -37438,7 +39898,7 @@ export const PembayaranMitraCreateArgsSchema: z.ZodType<Prisma.PembayaranMitraCr
 export const PembayaranMitraUpsertArgsSchema: z.ZodType<Prisma.PembayaranMitraUpsertArgs> = z.object({
   select: PembayaranMitraSelectSchema.optional(),
   include: PembayaranMitraIncludeSchema.optional(),
-  where: PembayaranMitraWhereUniqueInputSchema,
+  where: PembayaranMitraWhereUniqueInputSchema, 
   create: z.union([ PembayaranMitraCreateInputSchema, PembayaranMitraUncheckedCreateInputSchema ]),
   update: z.union([ PembayaranMitraUpdateInputSchema, PembayaranMitraUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37451,23 +39911,23 @@ export const PembayaranMitraCreateManyArgsSchema: z.ZodType<Prisma.PembayaranMit
 export const PembayaranMitraDeleteArgsSchema: z.ZodType<Prisma.PembayaranMitraDeleteArgs> = z.object({
   select: PembayaranMitraSelectSchema.optional(),
   include: PembayaranMitraIncludeSchema.optional(),
-  where: PembayaranMitraWhereUniqueInputSchema,
+  where: PembayaranMitraWhereUniqueInputSchema, 
 }).strict();
 
 export const PembayaranMitraUpdateArgsSchema: z.ZodType<Prisma.PembayaranMitraUpdateArgs> = z.object({
   select: PembayaranMitraSelectSchema.optional(),
   include: PembayaranMitraIncludeSchema.optional(),
   data: z.union([ PembayaranMitraUpdateInputSchema, PembayaranMitraUncheckedUpdateInputSchema ]),
-  where: PembayaranMitraWhereUniqueInputSchema,
+  where: PembayaranMitraWhereUniqueInputSchema, 
 }).strict();
 
 export const PembayaranMitraUpdateManyArgsSchema: z.ZodType<Prisma.PembayaranMitraUpdateManyArgs> = z.object({
   data: z.union([ PembayaranMitraUpdateManyMutationInputSchema, PembayaranMitraUncheckedUpdateManyInputSchema ]),
-  where: PembayaranMitraWhereInputSchema.optional(),
+  where: PembayaranMitraWhereInputSchema.optional(), 
 }).strict();
 
 export const PembayaranMitraDeleteManyArgsSchema: z.ZodType<Prisma.PembayaranMitraDeleteManyArgs> = z.object({
-  where: PembayaranMitraWhereInputSchema.optional(),
+  where: PembayaranMitraWhereInputSchema.optional(), 
 }).strict();
 
 export const LogBayarMitraCreateArgsSchema: z.ZodType<Prisma.LogBayarMitraCreateArgs> = z.object({
@@ -37479,7 +39939,7 @@ export const LogBayarMitraCreateArgsSchema: z.ZodType<Prisma.LogBayarMitraCreate
 export const LogBayarMitraUpsertArgsSchema: z.ZodType<Prisma.LogBayarMitraUpsertArgs> = z.object({
   select: LogBayarMitraSelectSchema.optional(),
   include: LogBayarMitraIncludeSchema.optional(),
-  where: LogBayarMitraWhereUniqueInputSchema,
+  where: LogBayarMitraWhereUniqueInputSchema, 
   create: z.union([ LogBayarMitraCreateInputSchema, LogBayarMitraUncheckedCreateInputSchema ]),
   update: z.union([ LogBayarMitraUpdateInputSchema, LogBayarMitraUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37492,23 +39952,23 @@ export const LogBayarMitraCreateManyArgsSchema: z.ZodType<Prisma.LogBayarMitraCr
 export const LogBayarMitraDeleteArgsSchema: z.ZodType<Prisma.LogBayarMitraDeleteArgs> = z.object({
   select: LogBayarMitraSelectSchema.optional(),
   include: LogBayarMitraIncludeSchema.optional(),
-  where: LogBayarMitraWhereUniqueInputSchema,
+  where: LogBayarMitraWhereUniqueInputSchema, 
 }).strict();
 
 export const LogBayarMitraUpdateArgsSchema: z.ZodType<Prisma.LogBayarMitraUpdateArgs> = z.object({
   select: LogBayarMitraSelectSchema.optional(),
   include: LogBayarMitraIncludeSchema.optional(),
   data: z.union([ LogBayarMitraUpdateInputSchema, LogBayarMitraUncheckedUpdateInputSchema ]),
-  where: LogBayarMitraWhereUniqueInputSchema,
+  where: LogBayarMitraWhereUniqueInputSchema, 
 }).strict();
 
 export const LogBayarMitraUpdateManyArgsSchema: z.ZodType<Prisma.LogBayarMitraUpdateManyArgs> = z.object({
   data: z.union([ LogBayarMitraUpdateManyMutationInputSchema, LogBayarMitraUncheckedUpdateManyInputSchema ]),
-  where: LogBayarMitraWhereInputSchema.optional(),
+  where: LogBayarMitraWhereInputSchema.optional(), 
 }).strict();
 
 export const LogBayarMitraDeleteManyArgsSchema: z.ZodType<Prisma.LogBayarMitraDeleteManyArgs> = z.object({
-  where: LogBayarMitraWhereInputSchema.optional(),
+  where: LogBayarMitraWhereInputSchema.optional(), 
 }).strict();
 
 export const ProvinceCreateArgsSchema: z.ZodType<Prisma.ProvinceCreateArgs> = z.object({
@@ -37520,7 +39980,7 @@ export const ProvinceCreateArgsSchema: z.ZodType<Prisma.ProvinceCreateArgs> = z.
 export const ProvinceUpsertArgsSchema: z.ZodType<Prisma.ProvinceUpsertArgs> = z.object({
   select: ProvinceSelectSchema.optional(),
   include: ProvinceIncludeSchema.optional(),
-  where: ProvinceWhereUniqueInputSchema,
+  where: ProvinceWhereUniqueInputSchema, 
   create: z.union([ ProvinceCreateInputSchema, ProvinceUncheckedCreateInputSchema ]),
   update: z.union([ ProvinceUpdateInputSchema, ProvinceUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37533,23 +39993,23 @@ export const ProvinceCreateManyArgsSchema: z.ZodType<Prisma.ProvinceCreateManyAr
 export const ProvinceDeleteArgsSchema: z.ZodType<Prisma.ProvinceDeleteArgs> = z.object({
   select: ProvinceSelectSchema.optional(),
   include: ProvinceIncludeSchema.optional(),
-  where: ProvinceWhereUniqueInputSchema,
+  where: ProvinceWhereUniqueInputSchema, 
 }).strict();
 
 export const ProvinceUpdateArgsSchema: z.ZodType<Prisma.ProvinceUpdateArgs> = z.object({
   select: ProvinceSelectSchema.optional(),
   include: ProvinceIncludeSchema.optional(),
   data: z.union([ ProvinceUpdateInputSchema, ProvinceUncheckedUpdateInputSchema ]),
-  where: ProvinceWhereUniqueInputSchema,
+  where: ProvinceWhereUniqueInputSchema, 
 }).strict();
 
 export const ProvinceUpdateManyArgsSchema: z.ZodType<Prisma.ProvinceUpdateManyArgs> = z.object({
   data: z.union([ ProvinceUpdateManyMutationInputSchema, ProvinceUncheckedUpdateManyInputSchema ]),
-  where: ProvinceWhereInputSchema.optional(),
+  where: ProvinceWhereInputSchema.optional(), 
 }).strict();
 
 export const ProvinceDeleteManyArgsSchema: z.ZodType<Prisma.ProvinceDeleteManyArgs> = z.object({
-  where: ProvinceWhereInputSchema.optional(),
+  where: ProvinceWhereInputSchema.optional(), 
 }).strict();
 
 export const RegencyCreateArgsSchema: z.ZodType<Prisma.RegencyCreateArgs> = z.object({
@@ -37561,7 +40021,7 @@ export const RegencyCreateArgsSchema: z.ZodType<Prisma.RegencyCreateArgs> = z.ob
 export const RegencyUpsertArgsSchema: z.ZodType<Prisma.RegencyUpsertArgs> = z.object({
   select: RegencySelectSchema.optional(),
   include: RegencyIncludeSchema.optional(),
-  where: RegencyWhereUniqueInputSchema,
+  where: RegencyWhereUniqueInputSchema, 
   create: z.union([ RegencyCreateInputSchema, RegencyUncheckedCreateInputSchema ]),
   update: z.union([ RegencyUpdateInputSchema, RegencyUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37574,23 +40034,23 @@ export const RegencyCreateManyArgsSchema: z.ZodType<Prisma.RegencyCreateManyArgs
 export const RegencyDeleteArgsSchema: z.ZodType<Prisma.RegencyDeleteArgs> = z.object({
   select: RegencySelectSchema.optional(),
   include: RegencyIncludeSchema.optional(),
-  where: RegencyWhereUniqueInputSchema,
+  where: RegencyWhereUniqueInputSchema, 
 }).strict();
 
 export const RegencyUpdateArgsSchema: z.ZodType<Prisma.RegencyUpdateArgs> = z.object({
   select: RegencySelectSchema.optional(),
   include: RegencyIncludeSchema.optional(),
   data: z.union([ RegencyUpdateInputSchema, RegencyUncheckedUpdateInputSchema ]),
-  where: RegencyWhereUniqueInputSchema,
+  where: RegencyWhereUniqueInputSchema, 
 }).strict();
 
 export const RegencyUpdateManyArgsSchema: z.ZodType<Prisma.RegencyUpdateManyArgs> = z.object({
   data: z.union([ RegencyUpdateManyMutationInputSchema, RegencyUncheckedUpdateManyInputSchema ]),
-  where: RegencyWhereInputSchema.optional(),
+  where: RegencyWhereInputSchema.optional(), 
 }).strict();
 
 export const RegencyDeleteManyArgsSchema: z.ZodType<Prisma.RegencyDeleteManyArgs> = z.object({
-  where: RegencyWhereInputSchema.optional(),
+  where: RegencyWhereInputSchema.optional(), 
 }).strict();
 
 export const KodeposCreateArgsSchema: z.ZodType<Prisma.KodeposCreateArgs> = z.object({
@@ -37602,7 +40062,7 @@ export const KodeposCreateArgsSchema: z.ZodType<Prisma.KodeposCreateArgs> = z.ob
 export const KodeposUpsertArgsSchema: z.ZodType<Prisma.KodeposUpsertArgs> = z.object({
   select: KodeposSelectSchema.optional(),
   include: KodeposIncludeSchema.optional(),
-  where: KodeposWhereUniqueInputSchema,
+  where: KodeposWhereUniqueInputSchema, 
   create: z.union([ KodeposCreateInputSchema, KodeposUncheckedCreateInputSchema ]),
   update: z.union([ KodeposUpdateInputSchema, KodeposUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37615,23 +40075,23 @@ export const KodeposCreateManyArgsSchema: z.ZodType<Prisma.KodeposCreateManyArgs
 export const KodeposDeleteArgsSchema: z.ZodType<Prisma.KodeposDeleteArgs> = z.object({
   select: KodeposSelectSchema.optional(),
   include: KodeposIncludeSchema.optional(),
-  where: KodeposWhereUniqueInputSchema,
+  where: KodeposWhereUniqueInputSchema, 
 }).strict();
 
 export const KodeposUpdateArgsSchema: z.ZodType<Prisma.KodeposUpdateArgs> = z.object({
   select: KodeposSelectSchema.optional(),
   include: KodeposIncludeSchema.optional(),
   data: z.union([ KodeposUpdateInputSchema, KodeposUncheckedUpdateInputSchema ]),
-  where: KodeposWhereUniqueInputSchema,
+  where: KodeposWhereUniqueInputSchema, 
 }).strict();
 
 export const KodeposUpdateManyArgsSchema: z.ZodType<Prisma.KodeposUpdateManyArgs> = z.object({
   data: z.union([ KodeposUpdateManyMutationInputSchema, KodeposUncheckedUpdateManyInputSchema ]),
-  where: KodeposWhereInputSchema.optional(),
+  where: KodeposWhereInputSchema.optional(), 
 }).strict();
 
 export const KodeposDeleteManyArgsSchema: z.ZodType<Prisma.KodeposDeleteManyArgs> = z.object({
-  where: KodeposWhereInputSchema.optional(),
+  where: KodeposWhereInputSchema.optional(), 
 }).strict();
 
 export const PengeluaranCreateArgsSchema: z.ZodType<Prisma.PengeluaranCreateArgs> = z.object({
@@ -37643,7 +40103,7 @@ export const PengeluaranCreateArgsSchema: z.ZodType<Prisma.PengeluaranCreateArgs
 export const PengeluaranUpsertArgsSchema: z.ZodType<Prisma.PengeluaranUpsertArgs> = z.object({
   select: PengeluaranSelectSchema.optional(),
   include: PengeluaranIncludeSchema.optional(),
-  where: PengeluaranWhereUniqueInputSchema,
+  where: PengeluaranWhereUniqueInputSchema, 
   create: z.union([ PengeluaranCreateInputSchema, PengeluaranUncheckedCreateInputSchema ]),
   update: z.union([ PengeluaranUpdateInputSchema, PengeluaranUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37656,23 +40116,23 @@ export const PengeluaranCreateManyArgsSchema: z.ZodType<Prisma.PengeluaranCreate
 export const PengeluaranDeleteArgsSchema: z.ZodType<Prisma.PengeluaranDeleteArgs> = z.object({
   select: PengeluaranSelectSchema.optional(),
   include: PengeluaranIncludeSchema.optional(),
-  where: PengeluaranWhereUniqueInputSchema,
+  where: PengeluaranWhereUniqueInputSchema, 
 }).strict();
 
 export const PengeluaranUpdateArgsSchema: z.ZodType<Prisma.PengeluaranUpdateArgs> = z.object({
   select: PengeluaranSelectSchema.optional(),
   include: PengeluaranIncludeSchema.optional(),
   data: z.union([ PengeluaranUpdateInputSchema, PengeluaranUncheckedUpdateInputSchema ]),
-  where: PengeluaranWhereUniqueInputSchema,
+  where: PengeluaranWhereUniqueInputSchema, 
 }).strict();
 
 export const PengeluaranUpdateManyArgsSchema: z.ZodType<Prisma.PengeluaranUpdateManyArgs> = z.object({
   data: z.union([ PengeluaranUpdateManyMutationInputSchema, PengeluaranUncheckedUpdateManyInputSchema ]),
-  where: PengeluaranWhereInputSchema.optional(),
+  where: PengeluaranWhereInputSchema.optional(), 
 }).strict();
 
 export const PengeluaranDeleteManyArgsSchema: z.ZodType<Prisma.PengeluaranDeleteManyArgs> = z.object({
-  where: PengeluaranWhereInputSchema.optional(),
+  where: PengeluaranWhereInputSchema.optional(), 
 }).strict();
 
 export const RegulatorySettingsCreateArgsSchema: z.ZodType<Prisma.RegulatorySettingsCreateArgs> = z.object({
@@ -37684,7 +40144,7 @@ export const RegulatorySettingsCreateArgsSchema: z.ZodType<Prisma.RegulatorySett
 export const RegulatorySettingsUpsertArgsSchema: z.ZodType<Prisma.RegulatorySettingsUpsertArgs> = z.object({
   select: RegulatorySettingsSelectSchema.optional(),
   include: RegulatorySettingsIncludeSchema.optional(),
-  where: RegulatorySettingsWhereUniqueInputSchema,
+  where: RegulatorySettingsWhereUniqueInputSchema, 
   create: z.union([ RegulatorySettingsCreateInputSchema, RegulatorySettingsUncheckedCreateInputSchema ]),
   update: z.union([ RegulatorySettingsUpdateInputSchema, RegulatorySettingsUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37697,23 +40157,23 @@ export const RegulatorySettingsCreateManyArgsSchema: z.ZodType<Prisma.Regulatory
 export const RegulatorySettingsDeleteArgsSchema: z.ZodType<Prisma.RegulatorySettingsDeleteArgs> = z.object({
   select: RegulatorySettingsSelectSchema.optional(),
   include: RegulatorySettingsIncludeSchema.optional(),
-  where: RegulatorySettingsWhereUniqueInputSchema,
+  where: RegulatorySettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const RegulatorySettingsUpdateArgsSchema: z.ZodType<Prisma.RegulatorySettingsUpdateArgs> = z.object({
   select: RegulatorySettingsSelectSchema.optional(),
   include: RegulatorySettingsIncludeSchema.optional(),
   data: z.union([ RegulatorySettingsUpdateInputSchema, RegulatorySettingsUncheckedUpdateInputSchema ]),
-  where: RegulatorySettingsWhereUniqueInputSchema,
+  where: RegulatorySettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const RegulatorySettingsUpdateManyArgsSchema: z.ZodType<Prisma.RegulatorySettingsUpdateManyArgs> = z.object({
   data: z.union([ RegulatorySettingsUpdateManyMutationInputSchema, RegulatorySettingsUncheckedUpdateManyInputSchema ]),
-  where: RegulatorySettingsWhereInputSchema.optional(),
+  where: RegulatorySettingsWhereInputSchema.optional(), 
 }).strict();
 
 export const RegulatorySettingsDeleteManyArgsSchema: z.ZodType<Prisma.RegulatorySettingsDeleteManyArgs> = z.object({
-  where: RegulatorySettingsWhereInputSchema.optional(),
+  where: RegulatorySettingsWhereInputSchema.optional(), 
 }).strict();
 
 export const RegulatoryReportCreateArgsSchema: z.ZodType<Prisma.RegulatoryReportCreateArgs> = z.object({
@@ -37725,7 +40185,7 @@ export const RegulatoryReportCreateArgsSchema: z.ZodType<Prisma.RegulatoryReport
 export const RegulatoryReportUpsertArgsSchema: z.ZodType<Prisma.RegulatoryReportUpsertArgs> = z.object({
   select: RegulatoryReportSelectSchema.optional(),
   include: RegulatoryReportIncludeSchema.optional(),
-  where: RegulatoryReportWhereUniqueInputSchema,
+  where: RegulatoryReportWhereUniqueInputSchema, 
   create: z.union([ RegulatoryReportCreateInputSchema, RegulatoryReportUncheckedCreateInputSchema ]),
   update: z.union([ RegulatoryReportUpdateInputSchema, RegulatoryReportUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37738,23 +40198,23 @@ export const RegulatoryReportCreateManyArgsSchema: z.ZodType<Prisma.RegulatoryRe
 export const RegulatoryReportDeleteArgsSchema: z.ZodType<Prisma.RegulatoryReportDeleteArgs> = z.object({
   select: RegulatoryReportSelectSchema.optional(),
   include: RegulatoryReportIncludeSchema.optional(),
-  where: RegulatoryReportWhereUniqueInputSchema,
+  where: RegulatoryReportWhereUniqueInputSchema, 
 }).strict();
 
 export const RegulatoryReportUpdateArgsSchema: z.ZodType<Prisma.RegulatoryReportUpdateArgs> = z.object({
   select: RegulatoryReportSelectSchema.optional(),
   include: RegulatoryReportIncludeSchema.optional(),
   data: z.union([ RegulatoryReportUpdateInputSchema, RegulatoryReportUncheckedUpdateInputSchema ]),
-  where: RegulatoryReportWhereUniqueInputSchema,
+  where: RegulatoryReportWhereUniqueInputSchema, 
 }).strict();
 
 export const RegulatoryReportUpdateManyArgsSchema: z.ZodType<Prisma.RegulatoryReportUpdateManyArgs> = z.object({
   data: z.union([ RegulatoryReportUpdateManyMutationInputSchema, RegulatoryReportUncheckedUpdateManyInputSchema ]),
-  where: RegulatoryReportWhereInputSchema.optional(),
+  where: RegulatoryReportWhereInputSchema.optional(), 
 }).strict();
 
 export const RegulatoryReportDeleteManyArgsSchema: z.ZodType<Prisma.RegulatoryReportDeleteManyArgs> = z.object({
-  where: RegulatoryReportWhereInputSchema.optional(),
+  where: RegulatoryReportWhereInputSchema.optional(), 
 }).strict();
 
 export const PelangganStatusLogCreateArgsSchema: z.ZodType<Prisma.PelangganStatusLogCreateArgs> = z.object({
@@ -37766,7 +40226,7 @@ export const PelangganStatusLogCreateArgsSchema: z.ZodType<Prisma.PelangganStatu
 export const PelangganStatusLogUpsertArgsSchema: z.ZodType<Prisma.PelangganStatusLogUpsertArgs> = z.object({
   select: PelangganStatusLogSelectSchema.optional(),
   include: PelangganStatusLogIncludeSchema.optional(),
-  where: PelangganStatusLogWhereUniqueInputSchema,
+  where: PelangganStatusLogWhereUniqueInputSchema, 
   create: z.union([ PelangganStatusLogCreateInputSchema, PelangganStatusLogUncheckedCreateInputSchema ]),
   update: z.union([ PelangganStatusLogUpdateInputSchema, PelangganStatusLogUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37779,23 +40239,23 @@ export const PelangganStatusLogCreateManyArgsSchema: z.ZodType<Prisma.PelangganS
 export const PelangganStatusLogDeleteArgsSchema: z.ZodType<Prisma.PelangganStatusLogDeleteArgs> = z.object({
   select: PelangganStatusLogSelectSchema.optional(),
   include: PelangganStatusLogIncludeSchema.optional(),
-  where: PelangganStatusLogWhereUniqueInputSchema,
+  where: PelangganStatusLogWhereUniqueInputSchema, 
 }).strict();
 
 export const PelangganStatusLogUpdateArgsSchema: z.ZodType<Prisma.PelangganStatusLogUpdateArgs> = z.object({
   select: PelangganStatusLogSelectSchema.optional(),
   include: PelangganStatusLogIncludeSchema.optional(),
   data: z.union([ PelangganStatusLogUpdateInputSchema, PelangganStatusLogUncheckedUpdateInputSchema ]),
-  where: PelangganStatusLogWhereUniqueInputSchema,
+  where: PelangganStatusLogWhereUniqueInputSchema, 
 }).strict();
 
 export const PelangganStatusLogUpdateManyArgsSchema: z.ZodType<Prisma.PelangganStatusLogUpdateManyArgs> = z.object({
   data: z.union([ PelangganStatusLogUpdateManyMutationInputSchema, PelangganStatusLogUncheckedUpdateManyInputSchema ]),
-  where: PelangganStatusLogWhereInputSchema.optional(),
+  where: PelangganStatusLogWhereInputSchema.optional(), 
 }).strict();
 
 export const PelangganStatusLogDeleteManyArgsSchema: z.ZodType<Prisma.PelangganStatusLogDeleteManyArgs> = z.object({
-  where: PelangganStatusLogWhereInputSchema.optional(),
+  where: PelangganStatusLogWhereInputSchema.optional(), 
 }).strict();
 
 export const PortalTiketCreateArgsSchema: z.ZodType<Prisma.PortalTiketCreateArgs> = z.object({
@@ -37807,7 +40267,7 @@ export const PortalTiketCreateArgsSchema: z.ZodType<Prisma.PortalTiketCreateArgs
 export const PortalTiketUpsertArgsSchema: z.ZodType<Prisma.PortalTiketUpsertArgs> = z.object({
   select: PortalTiketSelectSchema.optional(),
   include: PortalTiketIncludeSchema.optional(),
-  where: PortalTiketWhereUniqueInputSchema,
+  where: PortalTiketWhereUniqueInputSchema, 
   create: z.union([ PortalTiketCreateInputSchema, PortalTiketUncheckedCreateInputSchema ]),
   update: z.union([ PortalTiketUpdateInputSchema, PortalTiketUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37820,23 +40280,23 @@ export const PortalTiketCreateManyArgsSchema: z.ZodType<Prisma.PortalTiketCreate
 export const PortalTiketDeleteArgsSchema: z.ZodType<Prisma.PortalTiketDeleteArgs> = z.object({
   select: PortalTiketSelectSchema.optional(),
   include: PortalTiketIncludeSchema.optional(),
-  where: PortalTiketWhereUniqueInputSchema,
+  where: PortalTiketWhereUniqueInputSchema, 
 }).strict();
 
 export const PortalTiketUpdateArgsSchema: z.ZodType<Prisma.PortalTiketUpdateArgs> = z.object({
   select: PortalTiketSelectSchema.optional(),
   include: PortalTiketIncludeSchema.optional(),
   data: z.union([ PortalTiketUpdateInputSchema, PortalTiketUncheckedUpdateInputSchema ]),
-  where: PortalTiketWhereUniqueInputSchema,
+  where: PortalTiketWhereUniqueInputSchema, 
 }).strict();
 
 export const PortalTiketUpdateManyArgsSchema: z.ZodType<Prisma.PortalTiketUpdateManyArgs> = z.object({
   data: z.union([ PortalTiketUpdateManyMutationInputSchema, PortalTiketUncheckedUpdateManyInputSchema ]),
-  where: PortalTiketWhereInputSchema.optional(),
+  where: PortalTiketWhereInputSchema.optional(), 
 }).strict();
 
 export const PortalTiketDeleteManyArgsSchema: z.ZodType<Prisma.PortalTiketDeleteManyArgs> = z.object({
-  where: PortalTiketWhereInputSchema.optional(),
+  where: PortalTiketWhereInputSchema.optional(), 
 }).strict();
 
 export const AutoIsolirSettingsCreateArgsSchema: z.ZodType<Prisma.AutoIsolirSettingsCreateArgs> = z.object({
@@ -37848,7 +40308,7 @@ export const AutoIsolirSettingsCreateArgsSchema: z.ZodType<Prisma.AutoIsolirSett
 export const AutoIsolirSettingsUpsertArgsSchema: z.ZodType<Prisma.AutoIsolirSettingsUpsertArgs> = z.object({
   select: AutoIsolirSettingsSelectSchema.optional(),
   include: AutoIsolirSettingsIncludeSchema.optional(),
-  where: AutoIsolirSettingsWhereUniqueInputSchema,
+  where: AutoIsolirSettingsWhereUniqueInputSchema, 
   create: z.union([ AutoIsolirSettingsCreateInputSchema, AutoIsolirSettingsUncheckedCreateInputSchema ]),
   update: z.union([ AutoIsolirSettingsUpdateInputSchema, AutoIsolirSettingsUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37861,23 +40321,23 @@ export const AutoIsolirSettingsCreateManyArgsSchema: z.ZodType<Prisma.AutoIsolir
 export const AutoIsolirSettingsDeleteArgsSchema: z.ZodType<Prisma.AutoIsolirSettingsDeleteArgs> = z.object({
   select: AutoIsolirSettingsSelectSchema.optional(),
   include: AutoIsolirSettingsIncludeSchema.optional(),
-  where: AutoIsolirSettingsWhereUniqueInputSchema,
+  where: AutoIsolirSettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const AutoIsolirSettingsUpdateArgsSchema: z.ZodType<Prisma.AutoIsolirSettingsUpdateArgs> = z.object({
   select: AutoIsolirSettingsSelectSchema.optional(),
   include: AutoIsolirSettingsIncludeSchema.optional(),
   data: z.union([ AutoIsolirSettingsUpdateInputSchema, AutoIsolirSettingsUncheckedUpdateInputSchema ]),
-  where: AutoIsolirSettingsWhereUniqueInputSchema,
+  where: AutoIsolirSettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const AutoIsolirSettingsUpdateManyArgsSchema: z.ZodType<Prisma.AutoIsolirSettingsUpdateManyArgs> = z.object({
   data: z.union([ AutoIsolirSettingsUpdateManyMutationInputSchema, AutoIsolirSettingsUncheckedUpdateManyInputSchema ]),
-  where: AutoIsolirSettingsWhereInputSchema.optional(),
+  where: AutoIsolirSettingsWhereInputSchema.optional(), 
 }).strict();
 
 export const AutoIsolirSettingsDeleteManyArgsSchema: z.ZodType<Prisma.AutoIsolirSettingsDeleteManyArgs> = z.object({
-  where: AutoIsolirSettingsWhereInputSchema.optional(),
+  where: AutoIsolirSettingsWhereInputSchema.optional(), 
 }).strict();
 
 export const InvoiceSettingsCreateArgsSchema: z.ZodType<Prisma.InvoiceSettingsCreateArgs> = z.object({
@@ -37889,7 +40349,7 @@ export const InvoiceSettingsCreateArgsSchema: z.ZodType<Prisma.InvoiceSettingsCr
 export const InvoiceSettingsUpsertArgsSchema: z.ZodType<Prisma.InvoiceSettingsUpsertArgs> = z.object({
   select: InvoiceSettingsSelectSchema.optional(),
   include: InvoiceSettingsIncludeSchema.optional(),
-  where: InvoiceSettingsWhereUniqueInputSchema,
+  where: InvoiceSettingsWhereUniqueInputSchema, 
   create: z.union([ InvoiceSettingsCreateInputSchema, InvoiceSettingsUncheckedCreateInputSchema ]),
   update: z.union([ InvoiceSettingsUpdateInputSchema, InvoiceSettingsUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37902,23 +40362,23 @@ export const InvoiceSettingsCreateManyArgsSchema: z.ZodType<Prisma.InvoiceSettin
 export const InvoiceSettingsDeleteArgsSchema: z.ZodType<Prisma.InvoiceSettingsDeleteArgs> = z.object({
   select: InvoiceSettingsSelectSchema.optional(),
   include: InvoiceSettingsIncludeSchema.optional(),
-  where: InvoiceSettingsWhereUniqueInputSchema,
+  where: InvoiceSettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const InvoiceSettingsUpdateArgsSchema: z.ZodType<Prisma.InvoiceSettingsUpdateArgs> = z.object({
   select: InvoiceSettingsSelectSchema.optional(),
   include: InvoiceSettingsIncludeSchema.optional(),
   data: z.union([ InvoiceSettingsUpdateInputSchema, InvoiceSettingsUncheckedUpdateInputSchema ]),
-  where: InvoiceSettingsWhereUniqueInputSchema,
+  where: InvoiceSettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const InvoiceSettingsUpdateManyArgsSchema: z.ZodType<Prisma.InvoiceSettingsUpdateManyArgs> = z.object({
   data: z.union([ InvoiceSettingsUpdateManyMutationInputSchema, InvoiceSettingsUncheckedUpdateManyInputSchema ]),
-  where: InvoiceSettingsWhereInputSchema.optional(),
+  where: InvoiceSettingsWhereInputSchema.optional(), 
 }).strict();
 
 export const InvoiceSettingsDeleteManyArgsSchema: z.ZodType<Prisma.InvoiceSettingsDeleteManyArgs> = z.object({
-  where: InvoiceSettingsWhereInputSchema.optional(),
+  where: InvoiceSettingsWhereInputSchema.optional(), 
 }).strict();
 
 export const AutoIsolirLogCreateArgsSchema: z.ZodType<Prisma.AutoIsolirLogCreateArgs> = z.object({
@@ -37930,7 +40390,7 @@ export const AutoIsolirLogCreateArgsSchema: z.ZodType<Prisma.AutoIsolirLogCreate
 export const AutoIsolirLogUpsertArgsSchema: z.ZodType<Prisma.AutoIsolirLogUpsertArgs> = z.object({
   select: AutoIsolirLogSelectSchema.optional(),
   include: AutoIsolirLogIncludeSchema.optional(),
-  where: AutoIsolirLogWhereUniqueInputSchema,
+  where: AutoIsolirLogWhereUniqueInputSchema, 
   create: z.union([ AutoIsolirLogCreateInputSchema, AutoIsolirLogUncheckedCreateInputSchema ]),
   update: z.union([ AutoIsolirLogUpdateInputSchema, AutoIsolirLogUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37943,23 +40403,23 @@ export const AutoIsolirLogCreateManyArgsSchema: z.ZodType<Prisma.AutoIsolirLogCr
 export const AutoIsolirLogDeleteArgsSchema: z.ZodType<Prisma.AutoIsolirLogDeleteArgs> = z.object({
   select: AutoIsolirLogSelectSchema.optional(),
   include: AutoIsolirLogIncludeSchema.optional(),
-  where: AutoIsolirLogWhereUniqueInputSchema,
+  where: AutoIsolirLogWhereUniqueInputSchema, 
 }).strict();
 
 export const AutoIsolirLogUpdateArgsSchema: z.ZodType<Prisma.AutoIsolirLogUpdateArgs> = z.object({
   select: AutoIsolirLogSelectSchema.optional(),
   include: AutoIsolirLogIncludeSchema.optional(),
   data: z.union([ AutoIsolirLogUpdateInputSchema, AutoIsolirLogUncheckedUpdateInputSchema ]),
-  where: AutoIsolirLogWhereUniqueInputSchema,
+  where: AutoIsolirLogWhereUniqueInputSchema, 
 }).strict();
 
 export const AutoIsolirLogUpdateManyArgsSchema: z.ZodType<Prisma.AutoIsolirLogUpdateManyArgs> = z.object({
   data: z.union([ AutoIsolirLogUpdateManyMutationInputSchema, AutoIsolirLogUncheckedUpdateManyInputSchema ]),
-  where: AutoIsolirLogWhereInputSchema.optional(),
+  where: AutoIsolirLogWhereInputSchema.optional(), 
 }).strict();
 
 export const AutoIsolirLogDeleteManyArgsSchema: z.ZodType<Prisma.AutoIsolirLogDeleteManyArgs> = z.object({
-  where: AutoIsolirLogWhereInputSchema.optional(),
+  where: AutoIsolirLogWhereInputSchema.optional(), 
 }).strict();
 
 export const JobLockCreateArgsSchema: z.ZodType<Prisma.JobLockCreateArgs> = z.object({
@@ -37969,7 +40429,7 @@ export const JobLockCreateArgsSchema: z.ZodType<Prisma.JobLockCreateArgs> = z.ob
 
 export const JobLockUpsertArgsSchema: z.ZodType<Prisma.JobLockUpsertArgs> = z.object({
   select: JobLockSelectSchema.optional(),
-  where: JobLockWhereUniqueInputSchema,
+  where: JobLockWhereUniqueInputSchema, 
   create: z.union([ JobLockCreateInputSchema, JobLockUncheckedCreateInputSchema ]),
   update: z.union([ JobLockUpdateInputSchema, JobLockUncheckedUpdateInputSchema ]),
 }).strict();
@@ -37981,22 +40441,22 @@ export const JobLockCreateManyArgsSchema: z.ZodType<Prisma.JobLockCreateManyArgs
 
 export const JobLockDeleteArgsSchema: z.ZodType<Prisma.JobLockDeleteArgs> = z.object({
   select: JobLockSelectSchema.optional(),
-  where: JobLockWhereUniqueInputSchema,
+  where: JobLockWhereUniqueInputSchema, 
 }).strict();
 
 export const JobLockUpdateArgsSchema: z.ZodType<Prisma.JobLockUpdateArgs> = z.object({
   select: JobLockSelectSchema.optional(),
   data: z.union([ JobLockUpdateInputSchema, JobLockUncheckedUpdateInputSchema ]),
-  where: JobLockWhereUniqueInputSchema,
+  where: JobLockWhereUniqueInputSchema, 
 }).strict();
 
 export const JobLockUpdateManyArgsSchema: z.ZodType<Prisma.JobLockUpdateManyArgs> = z.object({
   data: z.union([ JobLockUpdateManyMutationInputSchema, JobLockUncheckedUpdateManyInputSchema ]),
-  where: JobLockWhereInputSchema.optional(),
+  where: JobLockWhereInputSchema.optional(), 
 }).strict();
 
 export const JobLockDeleteManyArgsSchema: z.ZodType<Prisma.JobLockDeleteManyArgs> = z.object({
-  where: JobLockWhereInputSchema.optional(),
+  where: JobLockWhereInputSchema.optional(), 
 }).strict();
 
 export const AppSettingsCreateArgsSchema: z.ZodType<Prisma.AppSettingsCreateArgs> = z.object({
@@ -38006,7 +40466,7 @@ export const AppSettingsCreateArgsSchema: z.ZodType<Prisma.AppSettingsCreateArgs
 
 export const AppSettingsUpsertArgsSchema: z.ZodType<Prisma.AppSettingsUpsertArgs> = z.object({
   select: AppSettingsSelectSchema.optional(),
-  where: AppSettingsWhereUniqueInputSchema,
+  where: AppSettingsWhereUniqueInputSchema, 
   create: z.union([ AppSettingsCreateInputSchema, AppSettingsUncheckedCreateInputSchema ]),
   update: z.union([ AppSettingsUpdateInputSchema, AppSettingsUncheckedUpdateInputSchema ]),
 }).strict();
@@ -38018,22 +40478,22 @@ export const AppSettingsCreateManyArgsSchema: z.ZodType<Prisma.AppSettingsCreate
 
 export const AppSettingsDeleteArgsSchema: z.ZodType<Prisma.AppSettingsDeleteArgs> = z.object({
   select: AppSettingsSelectSchema.optional(),
-  where: AppSettingsWhereUniqueInputSchema,
+  where: AppSettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const AppSettingsUpdateArgsSchema: z.ZodType<Prisma.AppSettingsUpdateArgs> = z.object({
   select: AppSettingsSelectSchema.optional(),
   data: z.union([ AppSettingsUpdateInputSchema, AppSettingsUncheckedUpdateInputSchema ]),
-  where: AppSettingsWhereUniqueInputSchema,
+  where: AppSettingsWhereUniqueInputSchema, 
 }).strict();
 
 export const AppSettingsUpdateManyArgsSchema: z.ZodType<Prisma.AppSettingsUpdateManyArgs> = z.object({
   data: z.union([ AppSettingsUpdateManyMutationInputSchema, AppSettingsUncheckedUpdateManyInputSchema ]),
-  where: AppSettingsWhereInputSchema.optional(),
+  where: AppSettingsWhereInputSchema.optional(), 
 }).strict();
 
 export const AppSettingsDeleteManyArgsSchema: z.ZodType<Prisma.AppSettingsDeleteManyArgs> = z.object({
-  where: AppSettingsWhereInputSchema.optional(),
+  where: AppSettingsWhereInputSchema.optional(), 
 }).strict();
 
 export const BillingGenerateLogCreateArgsSchema: z.ZodType<Prisma.BillingGenerateLogCreateArgs> = z.object({
@@ -38045,7 +40505,7 @@ export const BillingGenerateLogCreateArgsSchema: z.ZodType<Prisma.BillingGenerat
 export const BillingGenerateLogUpsertArgsSchema: z.ZodType<Prisma.BillingGenerateLogUpsertArgs> = z.object({
   select: BillingGenerateLogSelectSchema.optional(),
   include: BillingGenerateLogIncludeSchema.optional(),
-  where: BillingGenerateLogWhereUniqueInputSchema,
+  where: BillingGenerateLogWhereUniqueInputSchema, 
   create: z.union([ BillingGenerateLogCreateInputSchema, BillingGenerateLogUncheckedCreateInputSchema ]),
   update: z.union([ BillingGenerateLogUpdateInputSchema, BillingGenerateLogUncheckedUpdateInputSchema ]),
 }).strict();
@@ -38058,23 +40518,23 @@ export const BillingGenerateLogCreateManyArgsSchema: z.ZodType<Prisma.BillingGen
 export const BillingGenerateLogDeleteArgsSchema: z.ZodType<Prisma.BillingGenerateLogDeleteArgs> = z.object({
   select: BillingGenerateLogSelectSchema.optional(),
   include: BillingGenerateLogIncludeSchema.optional(),
-  where: BillingGenerateLogWhereUniqueInputSchema,
+  where: BillingGenerateLogWhereUniqueInputSchema, 
 }).strict();
 
 export const BillingGenerateLogUpdateArgsSchema: z.ZodType<Prisma.BillingGenerateLogUpdateArgs> = z.object({
   select: BillingGenerateLogSelectSchema.optional(),
   include: BillingGenerateLogIncludeSchema.optional(),
   data: z.union([ BillingGenerateLogUpdateInputSchema, BillingGenerateLogUncheckedUpdateInputSchema ]),
-  where: BillingGenerateLogWhereUniqueInputSchema,
+  where: BillingGenerateLogWhereUniqueInputSchema, 
 }).strict();
 
 export const BillingGenerateLogUpdateManyArgsSchema: z.ZodType<Prisma.BillingGenerateLogUpdateManyArgs> = z.object({
   data: z.union([ BillingGenerateLogUpdateManyMutationInputSchema, BillingGenerateLogUncheckedUpdateManyInputSchema ]),
-  where: BillingGenerateLogWhereInputSchema.optional(),
+  where: BillingGenerateLogWhereInputSchema.optional(), 
 }).strict();
 
 export const BillingGenerateLogDeleteManyArgsSchema: z.ZodType<Prisma.BillingGenerateLogDeleteManyArgs> = z.object({
-  where: BillingGenerateLogWhereInputSchema.optional(),
+  where: BillingGenerateLogWhereInputSchema.optional(), 
 }).strict();
 
 export const AuditLogCreateArgsSchema: z.ZodType<Prisma.AuditLogCreateArgs> = z.object({
@@ -38084,7 +40544,7 @@ export const AuditLogCreateArgsSchema: z.ZodType<Prisma.AuditLogCreateArgs> = z.
 
 export const AuditLogUpsertArgsSchema: z.ZodType<Prisma.AuditLogUpsertArgs> = z.object({
   select: AuditLogSelectSchema.optional(),
-  where: AuditLogWhereUniqueInputSchema,
+  where: AuditLogWhereUniqueInputSchema, 
   create: z.union([ AuditLogCreateInputSchema, AuditLogUncheckedCreateInputSchema ]),
   update: z.union([ AuditLogUpdateInputSchema, AuditLogUncheckedUpdateInputSchema ]),
 }).strict();
@@ -38096,22 +40556,22 @@ export const AuditLogCreateManyArgsSchema: z.ZodType<Prisma.AuditLogCreateManyAr
 
 export const AuditLogDeleteArgsSchema: z.ZodType<Prisma.AuditLogDeleteArgs> = z.object({
   select: AuditLogSelectSchema.optional(),
-  where: AuditLogWhereUniqueInputSchema,
+  where: AuditLogWhereUniqueInputSchema, 
 }).strict();
 
 export const AuditLogUpdateArgsSchema: z.ZodType<Prisma.AuditLogUpdateArgs> = z.object({
   select: AuditLogSelectSchema.optional(),
   data: z.union([ AuditLogUpdateInputSchema, AuditLogUncheckedUpdateInputSchema ]),
-  where: AuditLogWhereUniqueInputSchema,
+  where: AuditLogWhereUniqueInputSchema, 
 }).strict();
 
 export const AuditLogUpdateManyArgsSchema: z.ZodType<Prisma.AuditLogUpdateManyArgs> = z.object({
   data: z.union([ AuditLogUpdateManyMutationInputSchema, AuditLogUncheckedUpdateManyInputSchema ]),
-  where: AuditLogWhereInputSchema.optional(),
+  where: AuditLogWhereInputSchema.optional(), 
 }).strict();
 
 export const AuditLogDeleteManyArgsSchema: z.ZodType<Prisma.AuditLogDeleteManyArgs> = z.object({
-  where: AuditLogWhereInputSchema.optional(),
+  where: AuditLogWhereInputSchema.optional(), 
 }).strict();
 
 export const PenagihCreateArgsSchema: z.ZodType<Prisma.PenagihCreateArgs> = z.object({
@@ -38123,7 +40583,7 @@ export const PenagihCreateArgsSchema: z.ZodType<Prisma.PenagihCreateArgs> = z.ob
 export const PenagihUpsertArgsSchema: z.ZodType<Prisma.PenagihUpsertArgs> = z.object({
   select: PenagihSelectSchema.optional(),
   include: PenagihIncludeSchema.optional(),
-  where: PenagihWhereUniqueInputSchema,
+  where: PenagihWhereUniqueInputSchema, 
   create: z.union([ PenagihCreateInputSchema, PenagihUncheckedCreateInputSchema ]),
   update: z.union([ PenagihUpdateInputSchema, PenagihUncheckedUpdateInputSchema ]),
 }).strict();
@@ -38136,23 +40596,23 @@ export const PenagihCreateManyArgsSchema: z.ZodType<Prisma.PenagihCreateManyArgs
 export const PenagihDeleteArgsSchema: z.ZodType<Prisma.PenagihDeleteArgs> = z.object({
   select: PenagihSelectSchema.optional(),
   include: PenagihIncludeSchema.optional(),
-  where: PenagihWhereUniqueInputSchema,
+  where: PenagihWhereUniqueInputSchema, 
 }).strict();
 
 export const PenagihUpdateArgsSchema: z.ZodType<Prisma.PenagihUpdateArgs> = z.object({
   select: PenagihSelectSchema.optional(),
   include: PenagihIncludeSchema.optional(),
   data: z.union([ PenagihUpdateInputSchema, PenagihUncheckedUpdateInputSchema ]),
-  where: PenagihWhereUniqueInputSchema,
+  where: PenagihWhereUniqueInputSchema, 
 }).strict();
 
 export const PenagihUpdateManyArgsSchema: z.ZodType<Prisma.PenagihUpdateManyArgs> = z.object({
   data: z.union([ PenagihUpdateManyMutationInputSchema, PenagihUncheckedUpdateManyInputSchema ]),
-  where: PenagihWhereInputSchema.optional(),
+  where: PenagihWhereInputSchema.optional(), 
 }).strict();
 
 export const PenagihDeleteManyArgsSchema: z.ZodType<Prisma.PenagihDeleteManyArgs> = z.object({
-  where: PenagihWhereInputSchema.optional(),
+  where: PenagihWhereInputSchema.optional(), 
 }).strict();
 
 export const PenagihPenugasanCreateArgsSchema: z.ZodType<Prisma.PenagihPenugasanCreateArgs> = z.object({
@@ -38164,7 +40624,7 @@ export const PenagihPenugasanCreateArgsSchema: z.ZodType<Prisma.PenagihPenugasan
 export const PenagihPenugasanUpsertArgsSchema: z.ZodType<Prisma.PenagihPenugasanUpsertArgs> = z.object({
   select: PenagihPenugasanSelectSchema.optional(),
   include: PenagihPenugasanIncludeSchema.optional(),
-  where: PenagihPenugasanWhereUniqueInputSchema,
+  where: PenagihPenugasanWhereUniqueInputSchema, 
   create: z.union([ PenagihPenugasanCreateInputSchema, PenagihPenugasanUncheckedCreateInputSchema ]),
   update: z.union([ PenagihPenugasanUpdateInputSchema, PenagihPenugasanUncheckedUpdateInputSchema ]),
 }).strict();
@@ -38177,23 +40637,23 @@ export const PenagihPenugasanCreateManyArgsSchema: z.ZodType<Prisma.PenagihPenug
 export const PenagihPenugasanDeleteArgsSchema: z.ZodType<Prisma.PenagihPenugasanDeleteArgs> = z.object({
   select: PenagihPenugasanSelectSchema.optional(),
   include: PenagihPenugasanIncludeSchema.optional(),
-  where: PenagihPenugasanWhereUniqueInputSchema,
+  where: PenagihPenugasanWhereUniqueInputSchema, 
 }).strict();
 
 export const PenagihPenugasanUpdateArgsSchema: z.ZodType<Prisma.PenagihPenugasanUpdateArgs> = z.object({
   select: PenagihPenugasanSelectSchema.optional(),
   include: PenagihPenugasanIncludeSchema.optional(),
   data: z.union([ PenagihPenugasanUpdateInputSchema, PenagihPenugasanUncheckedUpdateInputSchema ]),
-  where: PenagihPenugasanWhereUniqueInputSchema,
+  where: PenagihPenugasanWhereUniqueInputSchema, 
 }).strict();
 
 export const PenagihPenugasanUpdateManyArgsSchema: z.ZodType<Prisma.PenagihPenugasanUpdateManyArgs> = z.object({
   data: z.union([ PenagihPenugasanUpdateManyMutationInputSchema, PenagihPenugasanUncheckedUpdateManyInputSchema ]),
-  where: PenagihPenugasanWhereInputSchema.optional(),
+  where: PenagihPenugasanWhereInputSchema.optional(), 
 }).strict();
 
 export const PenagihPenugasanDeleteManyArgsSchema: z.ZodType<Prisma.PenagihPenugasanDeleteManyArgs> = z.object({
-  where: PenagihPenugasanWhereInputSchema.optional(),
+  where: PenagihPenugasanWhereInputSchema.optional(), 
 }).strict();
 
 export const PenagihPenugasanLogCreateArgsSchema: z.ZodType<Prisma.PenagihPenugasanLogCreateArgs> = z.object({
@@ -38205,7 +40665,7 @@ export const PenagihPenugasanLogCreateArgsSchema: z.ZodType<Prisma.PenagihPenuga
 export const PenagihPenugasanLogUpsertArgsSchema: z.ZodType<Prisma.PenagihPenugasanLogUpsertArgs> = z.object({
   select: PenagihPenugasanLogSelectSchema.optional(),
   include: PenagihPenugasanLogIncludeSchema.optional(),
-  where: PenagihPenugasanLogWhereUniqueInputSchema,
+  where: PenagihPenugasanLogWhereUniqueInputSchema, 
   create: z.union([ PenagihPenugasanLogCreateInputSchema, PenagihPenugasanLogUncheckedCreateInputSchema ]),
   update: z.union([ PenagihPenugasanLogUpdateInputSchema, PenagihPenugasanLogUncheckedUpdateInputSchema ]),
 }).strict();
@@ -38218,21 +40678,62 @@ export const PenagihPenugasanLogCreateManyArgsSchema: z.ZodType<Prisma.PenagihPe
 export const PenagihPenugasanLogDeleteArgsSchema: z.ZodType<Prisma.PenagihPenugasanLogDeleteArgs> = z.object({
   select: PenagihPenugasanLogSelectSchema.optional(),
   include: PenagihPenugasanLogIncludeSchema.optional(),
-  where: PenagihPenugasanLogWhereUniqueInputSchema,
+  where: PenagihPenugasanLogWhereUniqueInputSchema, 
 }).strict();
 
 export const PenagihPenugasanLogUpdateArgsSchema: z.ZodType<Prisma.PenagihPenugasanLogUpdateArgs> = z.object({
   select: PenagihPenugasanLogSelectSchema.optional(),
   include: PenagihPenugasanLogIncludeSchema.optional(),
   data: z.union([ PenagihPenugasanLogUpdateInputSchema, PenagihPenugasanLogUncheckedUpdateInputSchema ]),
-  where: PenagihPenugasanLogWhereUniqueInputSchema,
+  where: PenagihPenugasanLogWhereUniqueInputSchema, 
 }).strict();
 
 export const PenagihPenugasanLogUpdateManyArgsSchema: z.ZodType<Prisma.PenagihPenugasanLogUpdateManyArgs> = z.object({
   data: z.union([ PenagihPenugasanLogUpdateManyMutationInputSchema, PenagihPenugasanLogUncheckedUpdateManyInputSchema ]),
-  where: PenagihPenugasanLogWhereInputSchema.optional(),
+  where: PenagihPenugasanLogWhereInputSchema.optional(), 
 }).strict();
 
 export const PenagihPenugasanLogDeleteManyArgsSchema: z.ZodType<Prisma.PenagihPenugasanLogDeleteManyArgs> = z.object({
-  where: PenagihPenugasanLogWhereInputSchema.optional(),
+  where: PenagihPenugasanLogWhereInputSchema.optional(), 
+}).strict();
+
+export const KomisiPetugasEntriCreateArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateArgs> = z.object({
+  select: KomisiPetugasEntriSelectSchema.optional(),
+  include: KomisiPetugasEntriIncludeSchema.optional(),
+  data: z.union([ KomisiPetugasEntriCreateInputSchema, KomisiPetugasEntriUncheckedCreateInputSchema ]),
+}).strict();
+
+export const KomisiPetugasEntriUpsertArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriUpsertArgs> = z.object({
+  select: KomisiPetugasEntriSelectSchema.optional(),
+  include: KomisiPetugasEntriIncludeSchema.optional(),
+  where: KomisiPetugasEntriWhereUniqueInputSchema, 
+  create: z.union([ KomisiPetugasEntriCreateInputSchema, KomisiPetugasEntriUncheckedCreateInputSchema ]),
+  update: z.union([ KomisiPetugasEntriUpdateInputSchema, KomisiPetugasEntriUncheckedUpdateInputSchema ]),
+}).strict();
+
+export const KomisiPetugasEntriCreateManyArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriCreateManyArgs> = z.object({
+  data: z.union([ KomisiPetugasEntriCreateManyInputSchema, KomisiPetugasEntriCreateManyInputSchema.array() ]),
+  skipDuplicates: z.boolean().optional(),
+}).strict();
+
+export const KomisiPetugasEntriDeleteArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriDeleteArgs> = z.object({
+  select: KomisiPetugasEntriSelectSchema.optional(),
+  include: KomisiPetugasEntriIncludeSchema.optional(),
+  where: KomisiPetugasEntriWhereUniqueInputSchema, 
+}).strict();
+
+export const KomisiPetugasEntriUpdateArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateArgs> = z.object({
+  select: KomisiPetugasEntriSelectSchema.optional(),
+  include: KomisiPetugasEntriIncludeSchema.optional(),
+  data: z.union([ KomisiPetugasEntriUpdateInputSchema, KomisiPetugasEntriUncheckedUpdateInputSchema ]),
+  where: KomisiPetugasEntriWhereUniqueInputSchema, 
+}).strict();
+
+export const KomisiPetugasEntriUpdateManyArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriUpdateManyArgs> = z.object({
+  data: z.union([ KomisiPetugasEntriUpdateManyMutationInputSchema, KomisiPetugasEntriUncheckedUpdateManyInputSchema ]),
+  where: KomisiPetugasEntriWhereInputSchema.optional(), 
+}).strict();
+
+export const KomisiPetugasEntriDeleteManyArgsSchema: z.ZodType<Prisma.KomisiPetugasEntriDeleteManyArgs> = z.object({
+  where: KomisiPetugasEntriWhereInputSchema.optional(), 
 }).strict();

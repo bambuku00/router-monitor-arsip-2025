@@ -96,9 +96,11 @@ describe("payload daftar pembayaran untuk Petugas", () => {
 
     const extras = pelangganListExtrasForAudience("Petugas", {
       mitraPpn: 11,
+      ppnEnabled: true,
       autoIsolirEnabled: true,
     });
     expect(extras.mitraPpn).toBe(11);
+    expect(extras.ppnEnabled).toBe(true);
     expect(extras).not.toHaveProperty("autoIsolirEnabled");
   });
 
@@ -162,9 +164,14 @@ describe("payload daftar pembayaran untuk peran staf", () => {
       expect(
         pelangganListExtrasForAudience(role, {
           mitraPpn: 11,
+          ppnEnabled: true,
           autoIsolirEnabled: true,
         })
-      ).toEqual({ mitraPpn: 11, autoIsolirEnabled: true });
+      ).toEqual({
+        mitraPpn: 11,
+        ppnEnabled: true,
+        autoIsolirEnabled: true,
+      });
     }
   );
 

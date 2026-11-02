@@ -10,6 +10,10 @@ import {
 import { isPaidRevenueBasis, normalizeRevenueBasis } from "@/lib/revenue-basis";
 import { computeRegulatoryAmounts } from "@/lib/regulatory-calc";
 import { getEffectiveRegulatorySettings } from "@/lib/regulatory-summary";
+import {
+  effectivePpnPercentFromPolicy,
+  resolveMitraPpnPolicy,
+} from "@/lib/ppn-policy";
 import { Prisma, RevenueBasis, RoleName, StatusBayar } from "@prisma/client";
 
 export type { PembayaranMitraRekapanRow } from "@/lib/pembayaran-mitra-calc";
@@ -54,6 +58,7 @@ function sumPpnFromRows(
   rows: PembayaranGrossRow[],
   ppnPercent: number
 ): number {
+  if (ppnPercent <= 0) return 0;
   return rows.reduce(
     (acc, val) =>
       acc + ppnNominalPerBaris(val.total, val.paket.harga, ppnPercent),
@@ -143,7 +148,8 @@ export async function computePembayaranMitraRekapan(
   year: number,
   month: number
 ): Promise<PembayaranMitraRekapanRow> {
-  const ppnPercent = user.ppn ?? 11;
+  const ppnPolicy = await resolveMitraPpnPolicy(user.id);
+  const ppnPercent = effectivePpnPercentFromPolicy(ppnPolicy);
   const revenueBasis = normalizeRevenueBasis(user.revenueBasis);
 
   if (user.role === "Client") {
@@ -164,7 +170,10 @@ export async function computePembayaranMitraRekapan(
     const calculation = filteredSubscriptions.reduce(
       (acc, val) => {
         let gross, vat;
-        if (val.incVat) {
+        if (ppnPercent <= 0) {
+          gross = val.bulanan;
+          vat = 0;
+        } else if (val.incVat) {
           gross = val.bulanan;
           const dpp = gross / (1 + ppnRate);
           vat = gross - dpp;

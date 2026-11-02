@@ -301,6 +301,11 @@ export async function PUT(
       user: data.user,
       ...(data.omset !== undefined ? { omset: data.omset } : {}),
       ...(data.ppn !== undefined ? { ppn: data.ppn } : {}),
+      ...(user.role === "Superadmin" &&
+      existing.role === "Superadmin" &&
+      data.ppnEnabled !== undefined
+        ? { ppnEnabled: data.ppnEnabled !== false }
+        : {}),
       ...(data.role ? { role: data.role } : {}),
       ...(hasRole(user, "Superadmin") && data.parentId
         ? { parentId: data.parentId }

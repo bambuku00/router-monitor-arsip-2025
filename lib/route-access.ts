@@ -9,6 +9,10 @@ import {
   hasStaffMenuAccess,
 } from "@/lib/staff-menu-access";
 import type { StaffMenuKey } from "@/lib/staff-menu-keys";
+import {
+  hideMikrotikNavigation,
+  isMikrotikRelatedPagePath,
+} from "@/lib/arsip-nav";
 
 export type RouteAccessUser = {
   id: number;
@@ -243,6 +247,13 @@ function normalizePathname(pathname: string): string {
 function ruleAllowsUser(rule: RouteRule, user: RouteAccessUser): boolean {
   if (!rule.roleAllowed(user)) return false;
   if (rule.menuKey && !hasStaffMenuAccess(user, rule.menuKey)) return false;
+  if (hideMikrotikNavigation()) {
+    if (rule.menuKey === "routers" || rule.menuKey === "mikrotik_tools") {
+      return false;
+    }
+    const landing = resolveLandingPath(rule, user);
+    if (isMikrotikRelatedPagePath(landing)) return false;
+  }
   return true;
 }
 
@@ -280,6 +291,7 @@ export function canAccessPathname(
 ): boolean {
   const p = normalizePathname(pathname);
   if (p.startsWith("/forbidden")) return true;
+  if (hideMikrotikNavigation() && isMikrotikRelatedPagePath(p)) return false;
 
   const rule = findMatchingRule(p);
   if (!rule) return true;
@@ -325,6 +337,13 @@ export function canAccessApiPath(
   user: RouteAccessUser,
   pathname: string
 ): boolean {
+  if (
+    hideMikrotikNavigation() &&
+    pathname.startsWith("/api/tools/mikrotik")
+  ) {
+    return false;
+  }
+
   const key = apiPathRequiresStaffMenuKey(pathname);
   if (!key) return true;
   if (!hasStaffMenuAccess(user, key)) return false;

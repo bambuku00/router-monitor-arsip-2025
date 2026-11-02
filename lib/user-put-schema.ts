@@ -32,6 +32,7 @@ export const UserPutSchema = z.object({
   parentId: z.preprocess(toOptionalId, z.number().int().nullish().optional()),
   omset: z.number().int().nullish().optional(),
   ppn: z.number().nullish().optional(),
+  ppnEnabled: z.boolean().optional(),
   revenueBasis: RevenueBasisSchema.optional(),
   billingStartMode: BillingStartModeSchema.optional(),
   billingStartDate: z.preprocess(

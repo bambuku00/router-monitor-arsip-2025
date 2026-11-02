@@ -124,6 +124,7 @@ export default function PageData() {
   );
 
   const [user, setUser] = useState<Rekapan[]>([]);
+  const [ppnEnabled, setPpnEnabled] = useState(true);
   const [mutating, setMutating] = useState<boolean>(true);
   const loadData = useCallback(async (signal?: AbortSignal) => {
     setMutating(true);
@@ -157,6 +158,7 @@ export default function PageData() {
         return;
       }
       setUser(json.data || []);
+      setPpnEnabled(json.ppnEnabled !== false);
       setMutating(false);
     } catch (err) {
       const error = err as Error;
@@ -435,7 +437,7 @@ export default function PageData() {
               <td rowSpan={2}>Tanggal Inv.</td>
               <td rowSpan={2}>Bruto tagihan</td>
               <td rowSpan={2}>Nett</td>
-              <td rowSpan={2}>PPN</td>
+              {ppnEnabled ? <td rowSpan={2}>PPN</td> : null}
               <td rowSpan={2}>BHP</td>
               <td rowSpan={2}>USO</td>
               <td colSpan={2}>Pembagian Hasil</td>
@@ -580,9 +582,11 @@ export default function PageData() {
                           maximumFractionDigits: 0,
                         })}
                       </td>
-                      <td className="whitespace-pre-wrap px-4 py-2">
-                        {formatIdr(val.pembayaran.ppn)}
-                      </td>
+                      {ppnEnabled ? (
+                        <td className="whitespace-pre-wrap px-4 py-2">
+                          {formatIdr(val.pembayaran.ppn)}
+                        </td>
+                      ) : null}
                       <td className="whitespace-pre-wrap px-4 py-2">
                         {formatIdr(val.pembayaran.bhp ?? 0)}
                       </td>

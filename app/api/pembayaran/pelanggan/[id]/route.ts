@@ -19,6 +19,7 @@ import {
   valuesForAudience,
 } from "@/lib/pembayaran-petugas-response";
 import { listPppBelumInputPaginated } from "@/lib/pembayaran-ppp-counts";
+import { resolveMitraPpnPolicy } from "@/lib/ppn-policy";
 import { pelangganUntukPenagihanWhere } from "@/lib/pembayaran-pelanggan-scope";
 import {
   isTagihanStatusBayarFilter,
@@ -401,7 +402,7 @@ export async function GET(
     }>[];
     let totalPages: number;
 
-    const [mitraUserRow, autoIsolirSettings] = await Promise.all([
+    const [mitraUserRow, autoIsolirSettings, ppnPolicy] = await Promise.all([
       prisma.user.findUnique({
         where: { id: mitraUserId },
         select: {
@@ -415,7 +416,14 @@ export async function GET(
         where: { userId: mitraUserId },
         select: { enabled: true },
       }),
+      resolveMitraPpnPolicy(mitraUserId),
     ]);
+
+    const pelangganListExtras = {
+      mitraPpn: ppnPolicy.ppnEnabled ? ppnPolicy.ppnPercent : null,
+      ppnEnabled: ppnPolicy.ppnEnabled,
+      autoIsolirEnabled: autoIsolirSettings?.enabled === true,
+    };
 
     const loadWindow = async (where: Prisma.PelangganWhereInput) => {
       if (!urutan) {
@@ -564,10 +572,7 @@ export async function GET(
         mitraBillingStartDate: mitraUserRow?.billingStartDate ?? null,
         billingPeriod:
           bulan && /^\d{4}-\d{2}$/.test(bulan) ? bulan : undefined,
-        ...pelangganListExtrasForAudience(user.role, {
-          mitraPpn: mitraUserRow?.ppn ?? null,
-          autoIsolirEnabled: autoIsolirSettings?.enabled === true,
-        }),
+        ...pelangganListExtrasForAudience(user.role, pelangganListExtras),
         inputterOptions,
         processedDays,
         routers,
@@ -652,10 +657,7 @@ export async function GET(
       mitraOwnedByIsp: mitraUserRow?.ownedByIsp === true,
       mitraBillingStartDate: mitraUserRow?.billingStartDate ?? null,
       billingPeriod,
-      ...pelangganListExtrasForAudience(user.role, {
-        mitraPpn: mitraUserRow?.ppn ?? null,
-        autoIsolirEnabled: autoIsolirSettings?.enabled === true,
-      }),
+      ...pelangganListExtrasForAudience(user.role, pelangganListExtras),
       inputterOptions,
       processedDays,
       routers,

@@ -5,6 +5,7 @@ import {
   normalizeStaffMenuWhitelist,
   reconcileStaffMenuKeys,
 } from "@/lib/staff-menu-access";
+import { isStaffMenuKeyHiddenInArsip } from "@/lib/arsip-nav";
 import {
   STAFF_MENU_KEYS,
   STAFF_MENU_LABELS,
@@ -141,6 +142,7 @@ export default function DialogData({
       portalSlug: "",
       ownedByIsp: false,
       revenueShareEnabled: true,
+      ppnEnabled: true,
     },
   });
 
@@ -174,6 +176,7 @@ export default function DialogData({
       portalSlug: "",
           ownedByIsp: false,
           revenueShareEnabled: true,
+          ppnEnabled: true,
         });
         return;
       }
@@ -202,6 +205,7 @@ export default function DialogData({
       portalSlug: "",
         ownedByIsp: false,
         revenueShareEnabled: true,
+        ppnEnabled: true,
       });
       return;
     }
@@ -227,6 +231,7 @@ export default function DialogData({
       parentId: val.parentId,
       omset: val.omset,
       ppn: val.ppn,
+      ppnEnabled: (val as { ppnEnabled?: boolean }).ppnEnabled !== false,
       revenueBasis: rawBasis === "PAID" ? "PAID" : "INVOICE",
       billingStartMode,
       billingStartDate: bd
@@ -432,6 +437,14 @@ export default function DialogData({
 
       if (user?.role === "Admin" && !val?.id) {
         payload.parentId = user.parentId ?? user.id;
+      }
+
+      if (
+        user?.role === "Superadmin" &&
+        val?.role === "Superadmin" &&
+        mitraRole === "Superadmin"
+      ) {
+        payload.ppnEnabled = data.ppnEnabled !== false;
       }
 
       if (isMitraAdmin) {
@@ -730,6 +743,42 @@ export default function DialogData({
                       <Transition
                         as={React.Fragment}
                         show={
+                          user?.role === "Superadmin" &&
+                          !!val?.id &&
+                          watch("role") === "Superadmin"
+                        }
+                        enter="transition-opacity duration-300"
+                        enterFrom="opacity-0"
+                        enterTo="opacity-100"
+                        leave="transition-opacity duration-200"
+                        leaveFrom="opacity-100"
+                        leaveTo="opacity-0"
+                      >
+                        <Field className="grid gap-1.5 rounded-lg border border-amber-200/80 bg-amber-50/60 dark:bg-theme-muted/20 p-3">
+                          <Label className="text-sm/6 font-medium">
+                            PPN global (ISP)
+                          </Label>
+                          <label className="flex items-center gap-2 cursor-pointer text-sm">
+                            <input
+                              type="checkbox"
+                              className="rounded border-slate-300"
+                              checked={watch("ppnEnabled") !== false}
+                              onChange={(e) =>
+                                setValue("ppnEnabled", e.target.checked)
+                              }
+                            />
+                            <span>Aktifkan PPN di halaman pembayaran</span>
+                          </label>
+                          <p className="text-xs text-slate-500 dark:text-theme-fg-muted leading-snug">
+                            Nonaktifkan untuk laporan arsip tanpa PPN: menu dan
+                            kolom PPN disembunyikan, perhitungan tagihan memakai
+                            DPP saja.
+                          </p>
+                        </Field>
+                      </Transition>
+                      <Transition
+                        as={React.Fragment}
+                        show={
                           (user?.role === "Admin" ||
                             user?.role === "Superadmin") &&
                           (watch("role") === "Teknisi" ||
@@ -768,7 +817,9 @@ export default function DialogData({
                           </label>
                           {Array.isArray(watch("staffMenuKeys")) ? (
                             <div className="grid gap-2 sm:grid-cols-2">
-                              {STAFF_MENU_KEYS.map((key: StaffMenuKey) => {
+                              {STAFF_MENU_KEYS.filter(
+                                (key) => !isStaffMenuKeyHiddenInArsip(key)
+                              ).map((key: StaffMenuKey) => {
                                 const selected = watch("staffMenuKeys") ?? [];
                                 const on = selected.includes(key);
                                 const routersOn = selected.includes("routers");

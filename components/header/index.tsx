@@ -2,6 +2,7 @@
 
 import { SessionLucia } from "@/lib/auth";
 import { getOwnedResourcesUserId } from "@/lib/rbac";
+import { hideMikrotikNavigation } from "@/lib/arsip-nav";
 import { hasStaffMenuAccess } from "@/lib/staff-menu-access";
 import { cn } from "@/lib/utils";
 import {
@@ -283,7 +284,10 @@ export default function Header({
   );
 
   const user = auth?.user;
+  const hideMikrotikNav = hideMikrotikNavigation();
+
   const showPppoe =
+    !hideMikrotikNav &&
     (user?.role === "Admin" ||
       user?.role === "Teknisi" ||
       user?.role === "Keuangan") &&
@@ -337,7 +341,7 @@ export default function Header({
     user &&
     user.role !== "Petugas" &&
     (hasStaffMenuAccess(user, "settings") ||
-      hasStaffMenuAccess(user, "routers") ||
+      (!hideMikrotikNav && hasStaffMenuAccess(user, "routers")) ||
       hasStaffMenuAccess(user, "paket") ||
       hasStaffMenuAccess(user, "isolir_settings") ||
       hasStaffMenuAccess(user, "isolir_log") ||
@@ -443,7 +447,10 @@ export default function Header({
         </Link>
       ) : null}
 
-      {user && user.role !== "Petugas" && hasStaffMenuAccess(user, "mikrotik_tools") ? (
+      {!hideMikrotikNav &&
+      user &&
+      user.role !== "Petugas" &&
+      hasStaffMenuAccess(user, "mikrotik_tools") ? (
         <Link
           href="/tools/mikrotik"
           title="Mikrotik Tools"
@@ -482,7 +489,9 @@ export default function Header({
           >
             {({ close }) => (
               <>
-                {user && hasStaffMenuAccess(user, "routers") ? (
+                {!hideMikrotikNav &&
+                user &&
+                hasStaffMenuAccess(user, "routers") ? (
                   <Link
                     href="/routers"
                     className={cn(

@@ -43,13 +43,17 @@ type Props = {
   show: boolean;
   setShow: React.Dispatch<React.SetStateAction<boolean>>;
   ppn: number | null;
+  showPpn?: boolean;
   regulatory?: HitunganRegulatorySettings | null;
   loading?: boolean;
 };
 
-const COL_AKTIF = 10;
-const COL_BERHENTI = 11;
-const COL_BELUM_WAKTUNYA = 11;
+function colAktif(showPpn: boolean) {
+  return showPpn ? 11 : 9;
+}
+function colPotensial(showPpn: boolean) {
+  return showPpn ? 10 : 8;
+}
 
 const cellClass =
   "whitespace-nowrap px-4 py-3 tabular-nums text-sm sm:text-base";
@@ -243,7 +247,9 @@ function hasAktifRow(row: HitunganPaketRow) {
   return row.pembayaran.length > 0 || row.gratis > 0;
 }
 
-function HitunganTableHeadAktif() {
+function HitunganTableHeadAktif({ showPpn }: { showPpn: boolean }) {
+  const tarifSpan = showPpn ? 3 : 2;
+  const nilaiSpan = showPpn ? 4 : 3;
   return (
     <>
       <tr>
@@ -253,24 +259,28 @@ function HitunganTableHeadAktif() {
         <th rowSpan={2} className={`${thSub} text-left`}>
           Paket
         </th>
-        <th colSpan={3} className={thGroup}>
+        <th colSpan={tarifSpan} className={thGroup}>
           Tarif per pelanggan / bln
         </th>
         <th colSpan={2} className={thGroup}>
           Jumlah pelanggan
         </th>
-        <th colSpan={4} className={thGroup}>
+        <th colSpan={nilaiSpan} className={thGroup}>
           Nilai tagihan bulan ini
         </th>
       </tr>
       <tr>
         <th className={`${thSub} text-right`}>Harga (DPP)</th>
-        <th className={`${thSub} text-right`}>PPN</th>
+        {showPpn ? (
+          <th className={`${thSub} text-right`}>PPN</th>
+        ) : null}
         <th className={`${thSub} text-right`}>Tagihan</th>
         <th className={`${thSub} text-center`}>Tagihan</th>
         <th className={`${thSub} text-center`}>Gratis</th>
         <th className={`${thSub} text-right`}>Total Tagihan</th>
-        <th className={`${thSub} text-right`}>Total PPN</th>
+        {showPpn ? (
+          <th className={`${thSub} text-right`}>Total PPN</th>
+        ) : null}
         <th className={`${thSub} text-right`}>BHP</th>
         <th className={`${thSub} text-right`}>USO</th>
       </tr>
@@ -278,7 +288,9 @@ function HitunganTableHeadAktif() {
   );
 }
 
-function HitunganTableHeadBelumWaktunya() {
+function HitunganTableHeadBelumWaktunya({ showPpn }: { showPpn: boolean }) {
+  const tarifSpan = showPpn ? 3 : 2;
+  const nilaiSpan = showPpn ? 4 : 3;
   return (
     <>
       <tr>
@@ -288,23 +300,27 @@ function HitunganTableHeadBelumWaktunya() {
         <th rowSpan={2} className={`${thSub} text-left`}>
           Paket
         </th>
-        <th colSpan={3} className={thGroup}>
+        <th colSpan={tarifSpan} className={thGroup}>
           Tarif per pelanggan / bln
         </th>
         <th colSpan={1} className={thGroup}>
           Jumlah pelanggan
         </th>
-        <th colSpan={4} className={thGroup}>
+        <th colSpan={nilaiSpan} className={thGroup}>
           Nilai potensial (jumlah × tarif)
         </th>
       </tr>
       <tr>
         <th className={`${thSub} text-right`}>Harga (DPP)</th>
-        <th className={`${thSub} text-right`}>PPN</th>
+        {showPpn ? (
+          <th className={`${thSub} text-right`}>PPN</th>
+        ) : null}
         <th className={`${thSub} text-right`}>Tagihan</th>
         <th className={`${thSub} text-center`}>Belum Waktunya</th>
         <th className={`${thSub} text-right`}>Total Tagihan</th>
-        <th className={`${thSub} text-right`}>Total PPN</th>
+        {showPpn ? (
+          <th className={`${thSub} text-right`}>Total PPN</th>
+        ) : null}
         <th className={`${thSub} text-right`}>BHP</th>
         <th className={`${thSub} text-right`}>USO</th>
       </tr>
@@ -312,7 +328,9 @@ function HitunganTableHeadBelumWaktunya() {
   );
 }
 
-function HitunganTableHeadBerhenti() {
+function HitunganTableHeadBerhenti({ showPpn }: { showPpn: boolean }) {
+  const tarifSpan = showPpn ? 3 : 2;
+  const nilaiSpan = showPpn ? 4 : 3;
   return (
     <>
       <tr>
@@ -322,23 +340,27 @@ function HitunganTableHeadBerhenti() {
         <th rowSpan={2} className={`${thSub} text-left`}>
           Paket
         </th>
-        <th colSpan={3} className={thGroup}>
+        <th colSpan={tarifSpan} className={thGroup}>
           Tarif per pelanggan / bln
         </th>
         <th colSpan={1} className={thGroup}>
           Jumlah pelanggan
         </th>
-        <th colSpan={4} className={thGroup}>
+        <th colSpan={nilaiSpan} className={thGroup}>
           Nilai potensial (jumlah × tarif)
         </th>
       </tr>
       <tr>
         <th className={`${thSub} text-right`}>Harga (DPP)</th>
-        <th className={`${thSub} text-right`}>PPN</th>
+        {showPpn ? (
+          <th className={`${thSub} text-right`}>PPN</th>
+        ) : null}
         <th className={`${thSub} text-right`}>Tagihan</th>
         <th className={`${thSub} text-center`}>Berhenti</th>
         <th className={`${thSub} text-right`}>Total Tagihan</th>
-        <th className={`${thSub} text-right`}>Total PPN</th>
+        {showPpn ? (
+          <th className={`${thSub} text-right`}>Total PPN</th>
+        ) : null}
         <th className={`${thSub} text-right`}>BHP</th>
         <th className={`${thSub} text-right`}>USO</th>
       </tr>
@@ -351,17 +373,19 @@ function HitunganTableAktifBody({
   totals,
   ppnPct,
   regulatory,
+  showPpn,
 }: {
   rows: HitunganPaketRow[];
   totals: AktifTotals;
   ppnPct: number;
   regulatory: RegulatorySettingsInput;
+  showPpn: boolean;
 }) {
   if (rows.length === 0) {
     return (
       <tr>
         <td
-          colSpan={COL_AKTIF}
+          colSpan={colAktif(showPpn)}
           className="px-6 py-12 text-center text-slate-500 text-sm sm:text-base border border-slate-200"
         >
           Tidak ada tagihan atau gratis pada bulan ini
@@ -389,25 +413,34 @@ function HitunganTableAktifBody({
             <td className={cellCenter}>{i + 1}.</td>
             <td className={`${cellClass} font-medium text-left`}>{val.nama}</td>
             <td className={cellRight}>{formatIdr(val.harga)}</td>
-            <td className={cellRight}>{formatIdr(unitPPN)}</td>
+            {showPpn ? (
+              <td className={cellRight}>{formatIdr(unitPPN)}</td>
+            ) : null}
             <td className={cellRight}>{formatIdr(unitBruto)}</td>
             <td className={cellCenter}>{agg.count}</td>
             <td className={cellCenter}>{val.gratis}</td>
             <td className={cellRight}>{formatIdr(agg.sumGross)}</td>
-            <td className={cellRight}>{formatIdr(agg.sumPPN)}</td>
+            {showPpn ? (
+              <td className={cellRight}>{formatIdr(agg.sumPPN)}</td>
+            ) : null}
             <td className={cellRight}>{formatIdr(agg.sumBhp)}</td>
             <td className={cellRight}>{formatIdr(agg.sumUso)}</td>
           </tr>
         );
       })}
       <tr className="bg-slate-200/90 font-semibold text-sm *:border *:border-slate-200">
-        <td colSpan={5} className="px-4 py-3 text-right text-sm sm:text-base">
+        <td
+          colSpan={showPpn ? 5 : 4}
+          className="px-4 py-3 text-right text-sm sm:text-base"
+        >
           Total
         </td>
         <td className={cellCenter}>{totals.jumlahTagihan}</td>
         <td className={cellCenter}>{totals.gratis}</td>
         <td className={cellRight}>{formatIdr(totals.bayarTotal)}</td>
-        <td className={cellRight}>{formatIdr(totals.bayarPPN)}</td>
+        {showPpn ? (
+          <td className={cellRight}>{formatIdr(totals.bayarPPN)}</td>
+        ) : null}
         <td className={cellRight}>{formatIdr(totals.bayarBHP)}</td>
         <td className={cellRight}>{formatIdr(totals.bayarUSO)}</td>
       </tr>
@@ -420,17 +453,19 @@ function HitunganTableBelumWaktunyaBody({
   totals,
   ppnPct,
   regulatory,
+  showPpn,
 }: {
   rows: HitunganPaketRow[];
   totals: BelumWaktunyaTotals;
   ppnPct: number;
   regulatory: RegulatorySettingsInput;
+  showPpn: boolean;
 }) {
   if (rows.length === 0) {
     return (
       <tr>
         <td
-          colSpan={COL_BELUM_WAKTUNYA}
+          colSpan={colPotensial(showPpn)}
           className="px-6 py-12 text-center text-slate-500 text-sm sm:text-base border border-slate-200"
         >
           Tidak ada pelanggan belum waktunya tagihan
@@ -458,23 +493,32 @@ function HitunganTableBelumWaktunyaBody({
             <td className={cellCenter}>{i + 1}.</td>
             <td className={`${cellClass} font-medium text-left`}>{val.nama}</td>
             <td className={cellRight}>{formatIdr(val.harga)}</td>
-            <td className={cellRight}>{formatIdr(unitPPN)}</td>
+            {showPpn ? (
+              <td className={cellRight}>{formatIdr(unitPPN)}</td>
+            ) : null}
             <td className={cellRight}>{formatIdr(unitBruto)}</td>
             <td className={cellCenter}>{val.belumWaktunya}</td>
             <td className={cellRight}>{formatIdr(agg.sumGross)}</td>
-            <td className={cellRight}>{formatIdr(agg.sumPPN)}</td>
+            {showPpn ? (
+              <td className={cellRight}>{formatIdr(agg.sumPPN)}</td>
+            ) : null}
             <td className={cellRight}>{formatIdr(agg.sumBhp)}</td>
             <td className={cellRight}>{formatIdr(agg.sumUso)}</td>
           </tr>
         );
       })}
       <tr className="bg-slate-200/90 font-semibold text-sm *:border *:border-slate-200">
-        <td colSpan={5} className="px-4 py-3 text-right text-sm sm:text-base">
+        <td
+          colSpan={showPpn ? 5 : 4}
+          className="px-4 py-3 text-right text-sm sm:text-base"
+        >
           Total
         </td>
         <td className={cellCenter}>{totals.belumWaktunya}</td>
         <td className={cellRight}>{formatIdr(totals.bayarTotal)}</td>
-        <td className={cellRight}>{formatIdr(totals.bayarPPN)}</td>
+        {showPpn ? (
+          <td className={cellRight}>{formatIdr(totals.bayarPPN)}</td>
+        ) : null}
         <td className={cellRight}>{formatIdr(totals.bayarBHP)}</td>
         <td className={cellRight}>{formatIdr(totals.bayarUSO)}</td>
       </tr>
@@ -487,17 +531,19 @@ function HitunganTableBerhentiBody({
   totals,
   ppnPct,
   regulatory,
+  showPpn,
 }: {
   rows: HitunganPaketRow[];
   totals: BerhentiTotals;
   ppnPct: number;
   regulatory: RegulatorySettingsInput;
+  showPpn: boolean;
 }) {
   if (rows.length === 0) {
     return (
       <tr>
         <td
-          colSpan={COL_BERHENTI}
+          colSpan={colPotensial(showPpn)}
           className="px-6 py-12 text-center text-slate-500 text-sm sm:text-base border border-slate-200"
         >
           Tidak ada pelanggan berhenti
@@ -525,23 +571,32 @@ function HitunganTableBerhentiBody({
             <td className={cellCenter}>{i + 1}.</td>
             <td className={`${cellClass} font-medium text-left`}>{val.nama}</td>
             <td className={cellRight}>{formatIdr(val.harga)}</td>
-            <td className={cellRight}>{formatIdr(unitPPN)}</td>
+            {showPpn ? (
+              <td className={cellRight}>{formatIdr(unitPPN)}</td>
+            ) : null}
             <td className={cellRight}>{formatIdr(unitBruto)}</td>
             <td className={cellCenter}>{val.berhenti}</td>
             <td className={cellRight}>{formatIdr(agg.sumGross)}</td>
-            <td className={cellRight}>{formatIdr(agg.sumPPN)}</td>
+            {showPpn ? (
+              <td className={cellRight}>{formatIdr(agg.sumPPN)}</td>
+            ) : null}
             <td className={cellRight}>{formatIdr(agg.sumBhp)}</td>
             <td className={cellRight}>{formatIdr(agg.sumUso)}</td>
           </tr>
         );
       })}
       <tr className="bg-slate-200/90 font-semibold text-sm *:border *:border-slate-200">
-        <td colSpan={5} className="px-4 py-3 text-right text-sm sm:text-base">
+        <td
+          colSpan={showPpn ? 5 : 4}
+          className="px-4 py-3 text-right text-sm sm:text-base"
+        >
           Total
         </td>
         <td className={cellCenter}>{totals.berhenti}</td>
         <td className={cellRight}>{formatIdr(totals.bayarTotal)}</td>
-        <td className={cellRight}>{formatIdr(totals.bayarPPN)}</td>
+        {showPpn ? (
+          <td className={cellRight}>{formatIdr(totals.bayarPPN)}</td>
+        ) : null}
         <td className={cellRight}>{formatIdr(totals.bayarBHP)}</td>
         <td className={cellRight}>{formatIdr(totals.bayarUSO)}</td>
       </tr>
@@ -575,10 +630,11 @@ export default function DialogHitunganPaket({
   setShow,
   data,
   ppn,
+  showPpn = true,
   regulatory,
   loading,
 }: Props) {
-  const ppnPct = ppn ?? 11;
+  const ppnPct = showPpn ? (ppn ?? 11) : 0;
 
   const regulatorySettings = useMemo(
     (): RegulatorySettingsInput => ({
@@ -675,7 +731,7 @@ export default function DialogHitunganPaket({
                       <HitunganTableSection title="Tagihan Aktif">
                         <table className="w-full min-w-[960px] border-collapse">
                           <thead>
-                            <HitunganTableHeadAktif />
+                            <HitunganTableHeadAktif showPpn={showPpn} />
                           </thead>
                           <tbody>
                             <HitunganTableAktifBody
@@ -683,6 +739,7 @@ export default function DialogHitunganPaket({
                               totals={totalsAktif}
                               ppnPct={ppnPct}
                               regulatory={regulatorySettings}
+                              showPpn={showPpn}
                             />
                           </tbody>
                         </table>
@@ -694,7 +751,7 @@ export default function DialogHitunganPaket({
                       >
                         <table className="w-full min-w-[960px] border-collapse">
                           <thead>
-                            <HitunganTableHeadBelumWaktunya />
+                            <HitunganTableHeadBelumWaktunya showPpn={showPpn} />
                           </thead>
                           <tbody>
                             <HitunganTableBelumWaktunyaBody
@@ -702,6 +759,7 @@ export default function DialogHitunganPaket({
                               totals={totalsBelumWaktunya}
                               ppnPct={ppnPct}
                               regulatory={regulatorySettings}
+                              showPpn={showPpn}
                             />
                           </tbody>
                         </table>
@@ -713,7 +771,7 @@ export default function DialogHitunganPaket({
                       >
                         <table className="w-full min-w-[960px] border-collapse">
                           <thead>
-                            <HitunganTableHeadBerhenti />
+                            <HitunganTableHeadBerhenti showPpn={showPpn} />
                           </thead>
                           <tbody>
                             <HitunganTableBerhentiBody
@@ -721,6 +779,7 @@ export default function DialogHitunganPaket({
                               totals={totalsBerhenti}
                               ppnPct={ppnPct}
                               regulatory={regulatorySettings}
+                              showPpn={showPpn}
                             />
                           </tbody>
                         </table>

@@ -10,6 +10,10 @@ import { bagiPendapatanBersihMitraKantor } from "@/lib/pembayaran-split";
 import { ppnNominalPerBaris } from "@/lib/pembayaran-tax";
 import { isPaidRevenueBasis, normalizeRevenueBasis } from "@/lib/revenue-basis";
 import { getRegulatorySummaryForPembayaran } from "@/lib/regulatory-summary";
+import {
+  effectivePpnPercentFromPolicy,
+  resolveMitraPpnPolicy,
+} from "@/lib/ppn-policy";
 import prisma from "@/lib/prisma";
 
 export type MitraTagihanStatistik = {
@@ -25,6 +29,7 @@ export type MitraTagihanStatistik = {
   revenueBasis: RevenueBasis;
   ppn: number;
   ppnPercent: number;
+  ppnEnabled: boolean;
   bhpUso: number;
   pendapatan: number;
   kantor: number;
@@ -108,11 +113,14 @@ function aggregateTagihanRows(
     ? rows.filter((p) => p.status === "Terbayar")
     : rows;
   const grossBagiHasil = rowsForSplit.reduce((acc, val) => acc + val.total, 0);
-  const ppn = rowsForSplit.reduce(
-    (acc, val) =>
-      acc + ppnNominalPerBaris(val.total, val.paket.harga, ppnPercent),
-    0
-  );
+  const ppn =
+    ppnPercent <= 0
+      ? 0
+      : rowsForSplit.reduce(
+          (acc, val) =>
+            acc + ppnNominalPerBaris(val.total, val.paket.harga, ppnPercent),
+          0
+        );
 
   return {
     total,
@@ -127,6 +135,7 @@ function aggregateTagihanRows(
     revenueBasis,
     ppn,
     ppnPercent,
+    ppnEnabled: ppnPercent > 0,
   };
 }
 
@@ -146,17 +155,19 @@ export async function computeMitraTagihanStatistik(
     sembunyikanLunasKantor?: boolean;
   }
 ): Promise<MitraTagihanStatistik> {
-  const userSettings = await prisma.user.findFirst({
-    select: {
-      ppn: true,
-      omset: true,
-      revenueBasis: true,
-      revenueShareEnabled: true,
-      ownedByIsp: true,
-    },
-    where: { id: mitraUserId },
-  });
-  const ppnPercent = userSettings?.ppn ?? 11;
+  const [userSettings, ppnPolicy] = await Promise.all([
+    prisma.user.findFirst({
+      select: {
+        omset: true,
+        revenueBasis: true,
+        revenueShareEnabled: true,
+        ownedByIsp: true,
+      },
+      where: { id: mitraUserId },
+    }),
+    resolveMitraPpnPolicy(mitraUserId),
+  ]);
+  const ppnPercent = effectivePpnPercentFromPolicy(ppnPolicy);
   const revenueBasis = normalizeRevenueBasis(userSettings?.revenueBasis);
 
   const pelangganScope: Prisma.PelangganWhereInput = {
@@ -218,6 +229,7 @@ export async function computeMitraTagihanStatistik(
     mitra: split.mitra,
     tagihan: split.kantor + partial.ppn + bhpUso,
     ownedByIsp: userSettings?.ownedByIsp === true,
+    ppnEnabled: ppnPolicy.ppnEnabled,
   };
 }
 

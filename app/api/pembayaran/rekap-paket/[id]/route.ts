@@ -7,6 +7,7 @@ import {
 import { pelangganUntukPenagihanWhere } from "@/lib/pembayaran-pelanggan-scope";
 import { isPppIsolir } from "@/lib/ppp-isolir";
 import { getEffectiveRegulatorySettings } from "@/lib/regulatory-summary";
+import { resolveMitraPpnPolicy } from "@/lib/ppn-policy";
 import { resolveStaffPelangganScopeWhere } from "@/lib/staff-pelanggan-scope";
 import prisma from "@/lib/prisma";
 import { staffMenuApiForbidden } from "@/lib/staff-menu-api";
@@ -80,8 +81,9 @@ export async function GET(
       request.nextUrl.searchParams.get("staff")
     );
 
-    const [mitra, pelangganRows, pembayaranRows, paketById, regulatorySettings] =
+    const [ppnPolicy, mitra, pelangganRows, pembayaranRows, paketById, regulatorySettings] =
       await Promise.all([
+        resolveMitraPpnPolicy(mitraUserId),
         prisma.user.findUnique({
           where: { id: mitraUserId },
           select: {
@@ -260,7 +262,8 @@ export async function GET(
 
     return NextResponse.json({
       data,
-      ppn: mitra?.ppn ?? null,
+      ppn: ppnPolicy.ppnEnabled ? ppnPolicy.ppnPercent : null,
+      ppnEnabled: ppnPolicy.ppnEnabled,
       regulatory: {
         bhpEnabled: regulatorySettings.bhpEnabled,
         bhpPercent: regulatorySettings.bhpPercent,

@@ -95,9 +95,19 @@ export function statusActorsForAudience<T extends StatusActorFields>(
 
 export function pelangganListExtrasForAudience(
   role: RoleName,
-  extras: { mitraPpn: number | null; autoIsolirEnabled: boolean }
-): { mitraPpn: number | null; autoIsolirEnabled?: boolean } {
-  if (role === "Petugas") return { mitraPpn: extras.mitraPpn };
+  extras: {
+    mitraPpn: number | null;
+    ppnEnabled: boolean;
+    autoIsolirEnabled: boolean;
+  }
+): {
+  mitraPpn: number | null;
+  ppnEnabled: boolean;
+  autoIsolirEnabled?: boolean;
+} {
+  if (role === "Petugas") {
+    return { mitraPpn: extras.mitraPpn, ppnEnabled: extras.ppnEnabled };
+  }
   return extras;
 }
 

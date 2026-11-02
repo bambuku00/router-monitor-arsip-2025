@@ -93,6 +93,7 @@ const UserBaseSchema = UserOptionalDefaultsSchema.omit({
     portalSlug: z.string().max(32).nullable().optional(),
     ownedByIsp: z.boolean().optional(),
     revenueShareEnabled: z.boolean().optional(),
+    ppnEnabled: z.boolean().optional(),
   })
 );
 

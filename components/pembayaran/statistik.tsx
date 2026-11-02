@@ -69,6 +69,7 @@ type Data = {
   revenueBasis?: "INVOICE" | "PAID";
   ppn: number;
   ppnPercent?: number;
+  ppnEnabled?: boolean;
   bhpUso?: number;
   pendapatan: number;
   kantor: number;
@@ -615,6 +616,7 @@ export default function Statistik({
           {collectorView ? <KomisiPetugasRingkas refreshToken={refreshTrigger} /> : null}
           {collectorView || hidePppCounts ? null : (
           <>
+          {data?.ppnEnabled !== false ? (
           <StatCard
             label={`PPN (${formatRegulatoryPercent(data?.ppnPercent ?? 11)})`}
             periodLabel={bulan_nama}
@@ -623,6 +625,7 @@ export default function Statistik({
           >
             {formatIdr(data?.ppn ?? 0)}
           </StatCard>
+          ) : null}
 
           <StatCard
             label={`BHP (${formatRegulatoryPercentLabel(data?.regulatory?.bhpEnabled ?? true, data?.regulatory?.bhpPercent ?? 0.5)})`}
@@ -666,12 +669,19 @@ export default function Statistik({
             <>
               {data?.ownedByIsp ? (
                 <StatCard
-                  label="Total PPN, BHP, USO"
+                  label={
+                    data?.ppnEnabled !== false
+                      ? "Total PPN, BHP, USO"
+                      : "Total BHP, USO"
+                  }
                   periodLabel={bulan_nama}
                   loading={mutating}
                   valueClassName="text-green-500 dark:text-green-400"
                 >
-                  {formatIdr((data?.ppn ?? 0) + (data?.bhpUso ?? 0))}
+                  {formatIdr(
+                    (data?.ppnEnabled !== false ? (data?.ppn ?? 0) : 0) +
+                      (data?.bhpUso ?? 0)
+                  )}
                 </StatCard>
               ) : null}
               <StatCard

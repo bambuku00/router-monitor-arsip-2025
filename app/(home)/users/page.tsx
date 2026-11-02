@@ -24,6 +24,7 @@ export default async function Users() {
     parentId: true,
     omset: true,
     ppn: true,
+    ppnEnabled: true,
     disabled: true,
     verified: true,
     created: true,

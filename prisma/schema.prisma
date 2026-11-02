@@ -52,6 +52,8 @@ model User {
   npwp             String?
   omset            Int?
   ppn              Float?
+  /// Superadmin: false = PPN dimatikan untuk seluruh perhitungan & tampilan pembayaran.
+  ppnEnabled       Boolean           @default(true) @map("ppn_enabled")
   parentId         Int?
   nomor            String?
   alamat           String?

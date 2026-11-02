@@ -661,6 +661,7 @@ export default function Data({
   const [pelanggan, setPelanggan] = useState<PelangganPembayaranRow[]>([]);
   const [pppBelumInput, setPppBelumInput] = useState<PppBelumInputRow[]>([]);
   const [mitraPpn, setMitraPpn] = useState<number | null>(null);
+  const [mitraPpnEnabled, setMitraPpnEnabled] = useState(true);
   const [mitraOwnedByIsp, setMitraOwnedByIsp] = useState(false);
   const [mitraBillingStartMode, setMitraBillingStartMode] =
     useState<BillingStartMode | null>("NEXT_MONTH");
@@ -715,6 +716,7 @@ export default function Data({
           Array.isArray(json.pppBelumInput) ? json.pppBelumInput : []
         );
         setMitraPpn(json.mitraPpn ?? null);
+        setMitraPpnEnabled(json.ppnEnabled !== false);
         setMitraBillingStartMode(json.mitraBillingStartMode ?? "NEXT_MONTH");
         setMitraOwnedByIsp(json.mitraOwnedByIsp === true);
         setMitraBillingStartDate(
@@ -758,7 +760,9 @@ export default function Data({
     [id, tahun, bulan, page, pageLimit, query, filterBayarBulan, filterMetode, filterBank, filterIsolir, filterPenagih, isPenagihView, sortDiproses, sortBayar, filterRouter, staffAs, refreshStatistikCounts]
   );
 
-  const ppnTarifMitra = mitraPpn ?? user.ppn ?? 11;
+  const ppnTarifMitra = mitraPpnEnabled
+    ? (mitraPpn ?? user.ppn ?? 11)
+    : 0;
 
   const canManageIsolir = canStaffManageIsolir(user);
 
@@ -1240,6 +1244,7 @@ export default function Data({
     []
   );
   const [hitunganPaketPpn, setHitunganPaketPpn] = useState<number | null>(null);
+  const [hitunganPaketPpnEnabled, setHitunganPaketPpnEnabled] = useState(true);
   const [hitunganPaketRegulatory, setHitunganPaketRegulatory] =
     useState<HitunganRegulatorySettings | null>(null);
   const [loadingHitunganPaket, setLoadingHitunganPaket] = useState(false);
@@ -1259,6 +1264,7 @@ export default function Data({
         const json = (await resp.json()) as {
           data?: HitunganPaketRow[];
           ppn?: number | null;
+          ppnEnabled?: boolean;
           regulatory?: HitunganRegulatorySettings;
           error?: string;
         };
@@ -1267,6 +1273,7 @@ export default function Data({
         }
         setHitunganPaketData(json.data ?? []);
         setHitunganPaketPpn(json.ppn ?? null);
+        setHitunganPaketPpnEnabled(json.ppnEnabled !== false);
         setHitunganPaketRegulatory(json.regulatory ?? null);
       } catch (err) {
         if ((err as Error).name === "AbortError") return;
@@ -2577,7 +2584,12 @@ export default function Data({
         data={hitunganPaketData}
         show={showPaketDialog}
         setShow={setShowPaketDialog}
-        ppn={hitunganPaketPpn ?? mitraPpn ?? user.ppn}
+        ppn={
+          hitunganPaketPpnEnabled
+            ? (hitunganPaketPpn ?? mitraPpn ?? user.ppn)
+            : 0
+        }
+        showPpn={hitunganPaketPpnEnabled && mitraPpnEnabled}
         regulatory={hitunganPaketRegulatory}
         loading={loadingHitunganPaket}
       />

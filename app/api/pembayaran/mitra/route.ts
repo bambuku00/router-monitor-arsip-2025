@@ -13,6 +13,7 @@ import { errorApiResponse } from "@/lib/server-actions/api";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { getBankForUser } from "@/lib/authz";
+import { getSuperadminPpnSettings } from "@/lib/ppn-policy";
 
 export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
@@ -90,6 +91,8 @@ export async function GET(request: NextRequest) {
       skip: skip,
     });
 
+    const ispPpn = await getSuperadminPpnSettings();
+
     const rekapan = await Promise.all(
       users.map(async (userRow) => {
         const pembayaranMitraRecord = await prisma.pembayaranMitra.findFirst({
@@ -119,6 +122,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       data: rekapan,
+      ppnEnabled: ispPpn.ppnEnabled,
       pagination: {
         page,
         limit,
