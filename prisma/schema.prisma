@@ -1,0 +1,1053 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+generator zod {
+  provider                         = "zod-prisma-types"
+  createOptionalDefaultValuesTypes = true
+  writeNullishInModelTypes         = true
+}
+
+datasource db {
+  // provider  = "postgresql"
+  // url       = env("POSTGRES_PRISMA_URL")
+  // directUrl = env("POSTGRES_URL_NON_POOLING")
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleName {
+  Superadmin
+  Admin
+  Keuangan
+  Teknisi
+  Client
+  Pending
+  Petugas
+}
+
+enum Identitas {
+  NIK
+  Paspor
+}
+
+model User {
+  id               Int               @id @default(autoincrement())
+  /// @zod.string.min(1, { message: "Required" })
+  nama             String
+  /// @zod.string.min(1, { message: "Required" })
+  user             String            @unique
+  /// @zod.string.min(3, { message: "Minimal 3 huruf" })
+  password         String
+  identitas        Identitas?
+  file_identitas   String?
+  no_identitas     String?
+  file_npwp        String?
+  npwp             String?
+  omset            Int?
+  ppn              Float?
+  parentId         Int?
+  nomor            String?
+  alamat           String?
+  parent           User?             @relation("ParentChildUser", fields: [parentId], references: [id])
+  childs           User[]            @relation("ParentChildUser")
+  role             RoleName
+  /// Daftar kunci menu yang boleh dibuka (whitelist). Hanya dipakai untuk Teknisi & Keuangan. Json array string, contoh: ["routers","paket"]. null = tidak dibatasi (akses penuh sesuai peran).
+  staffMenuKeys    Json?
+  /// Teknisi/Keuangan: false = hanya boleh catat pembayaran tunai (Cash), tidak via transfer/bank.
+  staffAllowBankPayment Boolean? @default(true)
+  /// Teknisi/Keuangan: true = boleh isolir / buka isolir PPP pelanggan.
+  staffAllowIsolir Boolean? @default(false)
+  /// Teknisi/Keuangan: true = boleh membatalkan pembayaran yang sudah Terbayar.
+  staffAllowCancelPayment Boolean? @default(false)
+  /// Teknisi/Keuangan: true = boleh berhenti / aktifkan kembali langganan pelanggan.
+  staffAllowBerhenti Boolean? @default(false)
+  routers          Router[]
+  paket            Paket[]
+  session          Session[]
+  client           Client?
+  disabled         Boolean           @default(false)
+  verified         Boolean           @default(true)
+  created          DateTime          @default(now())
+  updated          DateTime          @default(now()) @updatedAt
+  bank             Bank[]
+  log_bayar        LogBayar[]
+  pembayaran_mitra PembayaranMitra[]
+  pengeluaran      Pengeluaran[]
+  regulatory_settings RegulatorySettings?
+  regulatory_reports  RegulatoryReport[]
+  auto_isolir_settings AutoIsolirSettings?
+  auto_isolir_logs     AutoIsolirLog[]
+  /// Superadmin saja: atur kapan tagihan mitra mulai (diterapkan ke semua user PPPoE mitra)
+  billingStartMode  BillingStartMode? @default(NEXT_MONTH)
+  /// Hanya dipakai jika billingStartMode = CUSTOM_DATE
+  billingStartDate  DateTime?
+  /// Metode bagi hasil: INVOICE (default, mitra lama) atau PAID (hanya tagihan lunas)
+  revenueBasis      RevenueBasis      @default(INVOICE)
+  /// Tanggal generate tagihan per mitra (1–28). null = pakai setting global.
+  billingGenerateDay Int?              @map("billing_generate_day")
+  /// Kuota pelanggan gratis per mitra. null = unlimited (default).
+  freeCustomerLimit  Int?              @map("free_customer_limit")
+  /// Berapa kali mitra boleh upgrade/downgrade PPP dalam satu bulan. null = tidak dibatasi.
+  pppPackageChangeLimit Int?           @map("ppp_package_change_limit")
+  /// Superadmin: izinkan Auto Isi pelanggan dari PPP saat sinkronisasi harian.
+  pppAutoFillEnabled Boolean           @default(false) @map("ppp_auto_fill_enabled")
+  /// Mitra: izinkan pelanggan PPPoE masuk Portal Pelanggan.
+  portalPelangganEnabled Boolean       @default(false) @map("portal_pelanggan_enabled")
+  /// Bagian link /pppoe/{slug}. Unik, diatur mitra.
+  portalSlug             String?       @unique @map("portal_slug") @db.VarChar(32)
+  /// Hash PIN bersama untuk login Portal Pelanggan mitra ini.
+  portalPinHash          String?       @map("portal_pin_hash") @db.VarChar(255)
+  /// Nomor WhatsApp CS yang tampil di Portal Pelanggan. Kosong = tidak ditampilkan.
+  portalWaCs             String?       @map("portal_wa_cs") @db.VarChar(20)
+  /// Akun ini bagian dari ISP, bukan mitra independen.
+  ownedByIsp         Boolean           @default(false) @map("owned_by_isp")
+  /// false = bagi hasil dimatikan (hanya berlaku untuk akun milik ISP).
+  revenueShareEnabled Boolean          @default(true) @map("revenue_share_enabled")
+  billing_generate_logs BillingGenerateLog[]
+  staffPelangganScopes   StaffPelangganScope[] @relation("StaffPelangganScope")
+  invoiceSettings        InvoiceSettings?
+  portalTiket            PortalTiket[] @relation("PortalTiketMitra")
+  portalTiketDiproses    PortalTiket[] @relation("PortalTiketDiprosesOleh")
+  portalBersamaAnggota   PortalBersamaMitra[]
+  tripayGateway          TripayGateway?
+  penagih                Penagih[]
+  penagihAkun            Penagih?          @relation("PenagihAkun")
+  komisiPetugas          KomisiPetugasEntri[] @relation("KomisiActor")
+
+  @@index([role])
+  @@index([parentId])
+  @@index([disabled])
+}
+
+/// Satu link /pppoe/{slug} untuk beberapa mitra.
+/// kontakMode beda = PIN dan WhatsApp tiap mitra. bersama = ikut PIN dan WhatsApp portal ini.
+model PortalBersama {
+  id         Int      @id @default(autoincrement())
+  nama       String   @db.VarChar(80)
+  slug       String   @unique @db.VarChar(32)
+  enabled    Boolean  @default(true)
+  kontakMode String   @default("beda") @map("kontak_mode") @db.VarChar(8)
+  pinHash    String?  @map("pin_hash") @db.VarChar(255)
+  waCs       String?  @map("wa_cs") @db.VarChar(20)
+  created    DateTime @default(now())
+  updated    DateTime @updatedAt
+  anggota    PortalBersamaMitra[]
+
+  @@map("portal_bersama")
+}
+
+model PortalBersamaMitra {
+  portalId Int
+  userId   Int
+  portal   PortalBersama @relation(fields: [portalId], references: [id], onDelete: Cascade)
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([portalId, userId])
+  @@index([userId])
+  @@map("portal_bersama_mitra")
+}
+
+/// Kredensial Tripay milik satu mitra. Kosong = pembayaran online mati.
+model TripayGateway {
+  userId       Int      @id
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enabled      Boolean  @default(false)
+  sandbox      Boolean  @default(true)
+  merchantCode String   @default("") @map("merchant_code") @db.VarChar(32)
+  apiKey       String   @default("") @map("api_key") @db.Text
+  privateKey   String   @default("") @map("private_key") @db.Text
+  created      DateTime @default(now())
+  updated      DateTime @updatedAt
+
+  @@map("tripay_gateway")
+}
+
+model TripayTransaksi {
+  id           Int         @id @default(autoincrement())
+  pembayaranId Int
+  pembayaran   Pembayaran  @relation(fields: [pembayaranId], references: [id], onDelete: Cascade)
+  merchantRef  String      @unique @map("merchant_ref") @db.VarChar(50)
+  reference    String?     @db.VarChar(64)
+  checkoutUrl  String?     @map("checkout_url") @db.Text
+  amount       Int
+  status       String      @default("UNPAID") @db.VarChar(16)
+  created      DateTime    @default(now())
+  updated      DateTime    @updatedAt
+
+  @@index([pembayaranId])
+  @@map("tripay_transaksi")
+}
+
+model Client {
+  userId     Int                @unique
+  id         Int                @id @default(autoincrement())
+  /// @zod.string.min(1, { message: "Required" })
+  tgl        String
+  /// @zod.string.min(1, { message: "Required" })
+  nama       String
+  /// @zod.string.min(1, { message: "Required" })
+  institusi  String
+  /// @zod.string.min(5, { message: "Invalid" })
+  kota       String
+  /// @zod.string.min(5, { message: "Invalid" })
+  pos        String
+  telepon    String?
+  foto       String?
+  lat        String?
+  lng        String?
+  stop       Boolean            @default(false)
+  tgl_stop   String?
+  user       User               @relation(fields: [userId], references: [id])
+  perorangan ClientPerorangan[]
+  layanan    Layanan[]
+  deleted    Boolean            @default(false)
+  created    DateTime           @default(now())
+  updated    DateTime           @default(now()) @updatedAt
+}
+
+model Layanan {
+  id             Int      @id @default(autoincrement())
+  /// @zod.string.min(1, { message: "Required" })
+  nama           String
+  /// @zod.string.min(1, { message: "Required" })
+  tgl            String
+  /// @zod.string.min(1, { message: "Required" })
+  kapasitas      String
+  alamat_layanan String?
+  /// @zod.number({ invalid_type_error: "Required" }).int()
+  registrasi     Int
+  /// @zod.number({ invalid_type_error: "Required" }).int()
+  bulanan        Int
+  /// @zod.number({ invalid_type_error: "Required" }).int()
+  kontrak        Int
+  incVat         Boolean
+  client         Client   @relation(fields: [clientId], references: [id])
+  clientId       Int
+  deleted        Boolean  @default(false)
+  created        DateTime @default(now())
+  updated        DateTime @default(now()) @updatedAt
+}
+
+enum Perorang {
+  PJ
+  Teknisi
+  Keuangan
+}
+
+model ClientPerorangan {
+  id             Int        @id @default(autoincrement())
+  /// @zod.string.min(1, { message: "Required" })
+  nama           String
+  orang          Perorang
+  jabatan        String?
+  identitas      Identitas?
+  file_identitas String?
+  no_identitas   String?
+  clientId       Int
+  client         Client     @relation(fields: [clientId], references: [id])
+  email          String?
+  /// @zod.string.min(1, { message: "Required" })
+  nomor          String
+  deleted        Boolean    @default(false)
+  created        DateTime   @default(now())
+  updated        DateTime   @default(now()) @updatedAt
+
+  @@unique([clientId, jabatan], map: "perorang_client_jabatan")
+}
+
+model Session {
+  id        String   @id
+  userId    Int
+  expiresAt DateTime
+
+  user User @relation(references: [id], fields: [userId], onDelete: Cascade)
+}
+
+model Router {
+  id         Int         @id @default(autoincrement())
+  /// @zod.string.min(1, { message: "Required" })
+  nama       String
+  /// @zod.string.min(1, { message: "Required" })
+  host       String
+  /// @zod.number({ invalid_type_error: "Required" }).int()
+  port       Int
+  /// @zod.string.min(1, { message: "Required" })
+  user       String
+  /// @zod.string.min(1, { message: "Required" })
+  password   String
+  lat        String?
+  lng        String?
+  os_version         String?
+  isolirProfileName  String?
+  isolirGatewayIp    String?
+  isolirRosType      String?
+  isolirConfiguredAt DateTime?
+  /// Cuplikan profil PPP terakhir yang berhasil dibaca dari router. Dipakai cadangan export.
+  pppProfileBackup   Json?       @map("ppp_profile_backup")
+  userId             Int?
+  users      User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  pelanggan  Pelanggan[]
+  ppp_secret PppSecret[]
+  ppp_active PppActive[]
+  auto_isolir_logs AutoIsolirLog[]
+  paketLinks PaketRouter[]
+  deleted    Boolean     @default(false)
+  created    DateTime    @default(now())
+  updated    DateTime    @default(now()) @updatedAt
+
+  @@index([userId, deleted])
+}
+
+model Pelanggan {
+  id                Int              @id @default(autoincrement())
+  routerId          Int
+  /// @zod.string.min(1, { message: "Required" })
+  nama              String
+  /// NIK pelanggan. Kosong = tidak diisi.
+  nik               String?          @db.VarChar(20)
+  alamat            String
+  /// @zod.string.min(1, { message: "Required" })
+  nomor             String
+  email             String
+  foto              String?
+  lat               String?
+  lng               String?
+  /// @zod.string.min(1, { message: "Required" })
+  tgl               String
+  stop              Boolean          @default(false)
+  tgl_stop          String?
+  /// Hari bulan tagihan (1–30) untuk auto isolir; null = hanya isolir manual
+  tgl_isolir        Int?
+  /// Diisi lewat tombol bulk "Isi data" di halaman PPP; null = input manual
+  autoFilledAt      DateTime?
+  /// Pelanggan gratis eksplisit (kuota). Bukan sekadar tagihan Rp0 dari diskon.
+  isFreeCustomer    Boolean          @default(false) @map("is_free_customer")
+  /// Nomor layanan unik 12 digit: YYYYMM + urutan (diisi otomatis)
+  noLayanan         String           @unique @db.Char(12)
+  /// Hash PIN login portal. Kosong = pakai PIN mitra.
+  portalPinHash     String?          @map("portal_pin_hash") @db.VarChar(255)
+  ppp_secretId      Int?             @unique
+  ppp_secret        PppSecret?       @relation(fields: [ppp_secretId], references: [id], onDelete: Cascade)
+  /// @zod.number({ invalid_type_error: "Required" }).int()
+  paketId           Int
+  paket             Paket            @relation(fields: [paketId], references: [id], onDelete: NoAction)
+  created           DateTime         @default(now())
+  updated           DateTime         @default(now()) @updatedAt
+  router            Router           @relation(fields: [routerId], references: [id])
+  pembayaran        Pembayaran[]
+  auto_isolir_logs  AutoIsolirLog[]
+  status_logs       PelangganStatusLog[]
+  staffPelangganScopes StaffPelangganScope[]
+  portalTiket       PortalTiket[]
+  tagihanDihapus    TagihanDihapus[]
+  penagihPenugasan  PenagihPenugasan?
+  penagihPenugasanLog PenagihPenugasanLog[]
+  komisiPetugas     KomisiPetugasEntri[]
+
+  @@index([routerId, stop, tgl])
+  @@index([routerId, stop, isFreeCustomer])
+}
+
+/// Pelanggan PPP yang boleh dikelola staff Teknisi/Keuangan. Kosong = semua pelanggan mitra.
+model StaffPelangganScope {
+  staffUserId  Int      @map("staff_user_id")
+  staffUser    User     @relation("StaffPelangganScope", fields: [staffUserId], references: [id], onDelete: Cascade)
+  pelangganId  Int      @map("pelanggan_id")
+  pelanggan    Pelanggan @relation(fields: [pelangganId], references: [id], onDelete: Cascade)
+  created      DateTime @default(now())
+
+  @@id([staffUserId, pelangganId])
+  @@index([pelangganId])
+  @@map("staff_pelanggan_scope")
+}
+
+model PppSync {
+  id                  Int            @id @default(autoincrement())
+  routerId            Int            @unique
+  updated             DateTime       @default(now()) @updatedAt
+  lastSyncStartedAt   DateTime?
+  lastSyncCompletedAt DateTime?
+  lastSyncStatus      PppSyncStatus?
+  lastSyncError       String?        @db.Text
+  lastSyncSecrets     Int?
+  lastSyncActives     Int?
+  syncInProgress      Boolean        @default(false)
+}
+
+enum PppSyncStatus {
+  success
+  partial
+  failed
+  skipped
+}
+
+model PppSecret {
+  id                     Int        @id @default(autoincrement())
+  secretId               String
+  routerId               Int
+  router                 Router     @relation(fields: [routerId], references: [id])
+  name                   String
+  service                Service
+  callerId               String
+  password               String
+  profile                String
+  routes                 String
+  ipv6_routes            String
+  limit_bytes_in         String
+  limit_bytes_out        String
+  last_logged_out        String
+  last_callerId          String?
+  last_disconnect_reason String?
+  disabled               String
+  isIsolir               Boolean    @default(false)
+  profileBeforeIsolir    String?
+  comment                String?
+  on_router              Boolean    @default(true)
+  active_records         PppActive?
+  packageChanges         PppPackageChange[]
+  boosters               PppBooster[]
+  created                DateTime   @default(now())
+  updated                DateTime   @default(now()) @updatedAt
+  pelanggan              Pelanggan?
+
+  @@unique([routerId, name], map: "ppp_secret_name")
+}
+
+/// Catatan upgrade/downgrade PPP oleh mitra atau staff mitra. Dipakai untuk batas bulanan dan tanda di tabel.
+model PppPackageChange {
+  id          Int       @id @default(autoincrement())
+  pppSecretId Int
+  pppSecret   PppSecret @relation(fields: [pppSecretId], references: [id], onDelete: Cascade)
+  pelangganId Int
+  routerId    Int
+  ownerUserId Int
+  actorUserId Int
+  actorRole   RoleName
+  direction   String    @db.VarChar(16)
+  created     DateTime  @default(now())
+
+  @@index([ownerUserId, created])
+  @@index([pppSecretId, created])
+  @@index([routerId, created])
+  @@map("ppp_package_change")
+}
+
+/// Profil PPP sementara. Paket pelanggan tidak berubah. Setelah endsAt, profil dikembalikan.
+model PppBooster {
+  id              Int       @id @default(autoincrement())
+  pppSecretId     Int
+  pppSecret       PppSecret @relation(fields: [pppSecretId], references: [id], onDelete: Cascade)
+  routerId        Int
+  previousProfile String
+  boosterProfile  String
+  days            Int
+  endsAt          DateTime
+  restoredAt      DateTime?
+  actorUserId     Int
+  created         DateTime  @default(now())
+
+  @@index([routerId, restoredAt, endsAt])
+  @@index([pppSecretId, restoredAt])
+  @@map("ppp_booster")
+}
+
+model PppActive {
+  id              Int       @id @default(autoincrement())
+  activeId        String
+  routerId        Int
+  router          Router    @relation(fields: [routerId], references: [id])
+  name            String
+  service         Service
+  callerId        String
+  address         String
+  uptime          String
+  encoding        String
+  sessionId       String
+  limit_bytes_in  String
+  limit_bytes_out String
+  radius          String
+  comment         String?
+  secret_records  PppSecret @relation(fields: [routerId, name], references: [routerId, name], onDelete: NoAction)
+  created         DateTime  @default(now())
+  updated         DateTime  @default(now()) @updatedAt
+
+  @@unique([routerId, name], map: "ppp_active_name")
+}
+
+/// Manual override: mitra sering update user PPPoE di tengah bulan; tagihan bisa mulai bulan berjalan atau tanggal khusus.
+enum BillingStartMode {
+  NEXT_MONTH  // default: tagihan mulai bulan berikutnya
+  IMMEDIATE   // tagihan langsung bulan berjalan
+  CUSTOM_DATE // gunakan billingStartDate sebagai bulan pertama tagihan
+}
+
+/// Metode perhitungan bagi hasil mitra: dari tagihan terbit atau pembayaran masuk.
+enum RevenueBasis {
+  INVOICE // bagi hasil dihitung saat tagihan diterbitkan
+  PAID    // bagi hasil hanya dari tagihan yang sudah lunas
+}
+
+enum Service {
+  any
+  async
+  isdn
+  l2tp
+  pppoe
+  pptp
+  ovpn
+  sstp
+}
+
+model Paket {
+  id         Int          @id @default(autoincrement())
+  /// @zod.string.min(1, { message: "Required" })
+  nama       String
+  /// @zod.number({ invalid_type_error: "Required" })
+  kapasitas  Float
+  /// DPP / harga sebelum PPN (derived dari nominalPembayaran saat simpan).
+  harga             Int
+  /// Nominal pembayaran bruto (source of truth tagihan baru). Nullable sampai backfill selesai.
+  nominalPembayaran Int?         @map("nominal_pembayaran")
+  deleted    Boolean      @default(false)
+  created    DateTime     @default(now())
+  updated    DateTime     @default(now()) @updatedAt
+  pelanggan  Pelanggan[]
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     Int
+  pembayaran Pembayaran[]
+  routerLinks PaketRouter[]
+}
+
+/// Profil PPP router yang namanya sama dengan paket mitra. Diisi saat sinkron atau pemeriksaan Mikrotik.
+model PaketRouter {
+  paketId  Int
+  routerId Int
+  paket    Paket  @relation(fields: [paketId], references: [id], onDelete: Cascade)
+  router   Router @relation(fields: [routerId], references: [id], onDelete: Cascade)
+
+  @@id([paketId, routerId])
+  @@index([routerId])
+  @@map("paket_router")
+}
+
+model Bank {
+  id         Int          @id @default(autoincrement())
+  /// @zod.string.min(1, { message: "Required" })
+  bank       String
+  /// @zod.string.min(1, { message: "Required" })
+  norek      String
+  /// @zod.string.min(1, { message: "Required" })
+  nama       String
+  /// true = tidak masuk daftar rekening di invoice belum lunas. Invoice lunas, pembayaran, dan pembukuan tetap memakai rekening ini.
+  hideFromUnpaidInvoice Boolean @default(false) @map("hide_from_unpaid_invoice")
+  deleted    Boolean      @default(false)
+  created    DateTime     @default(now())
+  updated    DateTime     @default(now()) @updatedAt
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     Int
+  pembayaran Pembayaran[]
+  pembayaran_mitra PembayaranMitra[]
+  
+  @@index([userId])
+}
+
+enum StatusBayar {
+  Terbayar
+  Belum
+}
+
+enum MetodeBayar {
+  Transfer
+  Cash
+}
+
+/// Bulan tagihan yang dihapus Superadmin. Backfill dan generate tidak membuat ulang.
+model TagihanDihapus {
+  id          Int       @id @default(autoincrement())
+  pelangganId Int
+  pelanggan   Pelanggan @relation(fields: [pelangganId], references: [id], onDelete: Cascade)
+  /// Periode YYYY-MM
+  period      String    @db.Char(7)
+  created     DateTime  @default(now())
+
+  @@unique([pelangganId, period])
+  @@index([period])
+  @@map("tagihan_dihapus")
+}
+
+model Pembayaran {
+  id          Int          @id @default(autoincrement())
+  /// Nomor invoice 6 digit (unik global), tampil INV XXXXXX
+  noInvoice   String       @unique @db.Char(6)
+  inputterId  Int?
+  pelangganId Int
+  pelanggan   Pelanggan    @relation(fields: [pelangganId], references: [id], onDelete: Cascade)
+  paketId     Int
+  paket       Paket        @relation(fields: [paketId], references: [id], onDelete: NoAction)
+  jatuh_tempo String
+  total       Float
+  bankId      Int?
+  metode      MetodeBayar?
+  bank        Bank?        @relation(fields: [bankId], references: [id])
+  log         LogBayar[]
+  komisiPetugas KomisiPetugasEntri[]
+  tripayTransaksi  TripayTransaksi[]
+  auto_isolir_logs AutoIsolirLog[]
+  nonaktif    Boolean      @default(false)
+  /// Jumlah bulan yang dilunasi sekaligus oleh Admin/Keuangan. Null = bayar satu bulan.
+  bayarSekaligus Int?      @map("bayar_sekaligus")
+  status      StatusBayar  @default(Belum)
+  created     DateTime     @default(now())
+  updated     DateTime     @default(now()) @updatedAt
+
+  @@unique([pelangganId, jatuh_tempo], map: "pelanggan_perbulan")
+  @@index([pelangganId])
+  @@index([jatuh_tempo, status])
+}
+
+model LogBayar {
+  id           Int          @id @default(autoincrement())
+  pembayaranId Int
+  pembayaran   Pembayaran   @relation(fields: [pembayaranId], references: [id])
+  total        Float
+  metode       MetodeBayar?
+  status       StatusBayar
+  inputterId   Int
+  user         User         @relation(fields: [inputterId], references: [id])
+  created      DateTime     @default(now())
+  komisiPetugas KomisiPetugasEntri?
+  
+  @@index([pembayaranId])
+  @@index([inputterId])
+}
+
+model PembayaranMitra {
+  id      Int             @id @default(autoincrement())
+  userId  Int
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tanggal String
+  paid    Float
+  total   Float
+  metode  MetodeBayar?
+  bankId  Int?
+  bank    Bank?           @relation(fields: [bankId], references: [id])
+  log     LogBayarMitra[]
+  status  StatusBayar     @default(Belum)
+  created DateTime        @default(now())
+  updated DateTime        @default(now()) @updatedAt
+
+  @@unique([userId, tanggal], map: "mitraclient_perbulan")
+}
+
+model LogBayarMitra {
+  id           Int             @id @default(autoincrement())
+  pembayaranId Int
+  pembayaran   PembayaranMitra @relation(fields: [pembayaranId], references: [id])
+  paid         Float
+  metode       MetodeBayar?
+  status       StatusBayar
+  created      DateTime        @default(now())
+  
+  @@index([pembayaranId])
+}
+
+model Province {
+  id        Int       @id @default(autoincrement())
+  nama      String    @unique
+  regencies Regency[]
+}
+
+model Regency {
+  id         Int       @id @default(autoincrement())
+  nama       String    @unique
+  provinceId Int
+  province   Province  @relation(fields: [provinceId], references: [id])
+  kodepos    Kodepos[]
+}
+
+model Kodepos {
+  id        Int     @id @default(autoincrement())
+  code      String  @unique
+  regencyId Int
+  regency   Regency @relation(fields: [regencyId], references: [id])
+}
+
+model Pengeluaran {
+  id          Int      @id @default(autoincrement())
+  keterangan  String
+  nominal     Float
+  tanggal     DateTime
+  userId      Int?
+  user        User?    @relation(fields: [userId], references: [id])
+  created     DateTime @default(now())
+  updated     DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([tanggal])
+}
+
+enum RegulatoryCalculationBasis {
+  INVOICE_CREATED
+  PAYMENT_RECEIVED
+}
+
+/// Pengaturan BHP/USO per mitra (Admin pemilik data).
+model RegulatorySettings {
+  id                Int                        @id @default(autoincrement())
+  userId            Int                        @unique
+  user              User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bhpEnabled        Boolean                    @default(true)
+  /// @zod.number.min(0).max(100)
+  bhpPercent        Float                      @default(0.5)
+  usoEnabled        Boolean                    @default(true)
+  /// @zod.number.min(0).max(100)
+  usoPercent        Float                      @default(1.25)
+  calculationBasis  RegulatoryCalculationBasis @default(INVOICE_CREATED)
+  created           DateTime                   @default(now())
+  updated           DateTime                   @updatedAt
+
+  @@index([userId])
+}
+
+/// Rekap bulanan BHP/USO per mitra.
+model RegulatoryReport {
+  id               Int                        @id @default(autoincrement())
+  userId           Int
+  user             User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  periodMonth      Int
+  periodYear       Int
+  grossRevenue     Float
+  bhpAmount        Float                      @default(0)
+  usoAmount        Float                      @default(0)
+  totalAmount      Float                      @default(0)
+  calculationBasis RegulatoryCalculationBasis
+  generatedAt      DateTime                   @default(now())
+  created          DateTime                   @default(now())
+  updated          DateTime                   @updatedAt
+
+  @@unique([userId, periodYear, periodMonth], map: "regulatory_report_periode")
+  @@index([userId])
+  @@index([periodYear, periodMonth])
+}
+
+enum AutoIsolirLogStatus {
+  success
+  failed
+  skipped
+}
+
+enum AutoIsolirAction {
+  isolate
+  restore
+}
+
+enum PelangganStatusAction {
+  stop
+  resume
+}
+
+/// Catatan berhenti / lanjut berlangganan, beserta pelaku.
+model PelangganStatusLog {
+  id          Int                    @id @default(autoincrement())
+  pelangganId Int
+  pelanggan   Pelanggan              @relation(fields: [pelangganId], references: [id], onDelete: Cascade)
+  action      PelangganStatusAction
+  executedBy  String
+  created     DateTime               @default(now())
+
+  @@index([pelangganId, created])
+  @@map("pelanggan_status_logs")
+}
+
+enum PortalTiketKategori {
+  keluhan
+  lainnya
+}
+
+enum PortalTiketStatus {
+  baru
+  diproses
+  selesai
+}
+
+enum PortalTiketPrioritas {
+  rendah
+  normal
+  tinggi
+}
+
+/// Tiket keluhan pelanggan dari Portal Pelanggan.
+model PortalTiket {
+  id          Int                 @id @default(autoincrement())
+  pelangganId Int
+  pelanggan   Pelanggan           @relation(fields: [pelangganId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User                @relation("PortalTiketMitra", fields: [userId], references: [id], onDelete: Cascade)
+  kategori    PortalTiketKategori
+  judul       String              @db.VarChar(120)
+  pesan       String              @db.Text
+  /// Nomor WhatsApp yang bisa dihubungi untuk tiket ini.
+  wa          String?             @db.VarChar(20)
+  /// Nomor layanan yang ditulis pelanggan saat membuat tiket.
+  noLayanan   String?             @db.Char(12)
+  prioritas   PortalTiketPrioritas @default(normal)
+  status      PortalTiketStatus   @default(baru)
+  balasan     String?             @db.Text
+  /// Petugas yang mengubah tiket menjadi diproses atau selesai.
+  diprosesOlehId Int?             @map("diproses_oleh_id")
+  diprosesOleh   User?            @relation("PortalTiketDiprosesOleh", fields: [diprosesOlehId], references: [id], onDelete: SetNull)
+  created     DateTime            @default(now())
+  updated     DateTime            @updatedAt
+
+  @@index([pelangganId, created])
+  @@index([userId, status, created])
+  @@index([diprosesOlehId])
+  @@map("portal_tiket")
+}
+
+/// Pengaturan isolir otomatis per mitra (Admin).
+model AutoIsolirSettings {
+  id                    Int      @id @default(autoincrement())
+  userId                Int      @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enabled               Boolean  @default(false)
+  /// Hari toleransi setelah tanggal isolir pelanggan (tgl_isolir + toleranceDays)
+  toleranceDays         Int      @default(1)
+  /// Jam eksekusi (HH:mm, zona Asia/Jakarta) — referensi crontab
+  executeTime           String   @default("00:10")
+  /// Profile isolir default jika router belum punya isolirProfileName
+  isolirProfileName     String   @default("ISOLIR")
+  onlyActiveCustomers   Boolean  @default(true)
+  /// Opsi notifikasi — belum diimplementasi (placeholder)
+  notifyBefore          Boolean  @default(false)
+  notifyAfter           Boolean  @default(false)
+  /// Buka isolir otomatis saat tagihan lunas
+  autoRestoreOnPayment  Boolean  @default(true)
+  created               DateTime @default(now())
+  updated               DateTime @updatedAt
+
+  @@index([userId, enabled])
+}
+
+/// Template invoice / kuitansi per mitra (seperti apiwin invoice_settings).
+model InvoiceSettings {
+  id                 Int      @id @default(autoincrement())
+  userId             Int      @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logoSize           Int      @default(200)
+  logoFilename       String?
+  qrFilename         String?
+  bgFilename         String?
+  bgWatermark        Boolean  @default(true)
+  /// Lebar tampilan watermark di invoice (mm), default sama apiwin 220mm.
+  bgSizeMm           Int      @default(220)
+  /// Opacity watermark 5–100 (persen), tebal/tipis tampilan.
+  bgOpacity          Int      @default(40)
+  companyName        String   @default("PT. WAHYU ADIDAYA NETWORK")
+  companySlogan      String   @default("Internet Service Provider")
+  companyAddress1    String   @default("JLN RADEN WIJAYA RT 001 RW 003 GIRI")
+  companyAddress2    String   @default("BANYUWANGI")
+  companyAddress3    String   @default("KODE POS 68423")
+  signatureName      String   @default("admin")
+  signaturePosition  String   @default("Finance")
+  /// TANPA @default: MySQL < 8.0.13 menolak DEFAULT pada kolom TEXT (error 1101).
+  /// Nilai default disediakan di layer aplikasi (lib/invoice-settings.ts).
+  cashPaymentNote    String   @db.Text
+  confirmationNumber String   @default("0822-3299-7497")
+  paymentNotes       String   @db.Text
+  tandaTerima        String   @db.Text
+  ucapanLunas        String   @db.Text
+  footerText         String   @default("SUPPORT BY : WINET - ISP BILLING SYSTEM")
+  ppnStatus          Boolean  @default(true)
+  ppnValue           Float    @default(11)
+  /// before = harga paket sudah termasuk PPN; after = PPN ditambahkan
+  ppnCalculationMode String   @default("after")
+  discountStatus     Boolean  @default(false)
+  discountType       String   @default("fixed")
+  discountValue      Float    @default(0)
+  created            DateTime @default(now())
+  updated            DateTime @updatedAt
+
+  @@index([userId])
+}
+
+/// Log eksekusi isolir otomatis / restore sistem.
+model AutoIsolirLog {
+  id             Int                  @id @default(autoincrement())
+  userId         Int
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pelangganId    Int?
+  pelanggan      Pelanggan?           @relation(fields: [pelangganId], references: [id], onDelete: SetNull)
+  pembayaranId   Int?
+  pembayaran     Pembayaran?          @relation(fields: [pembayaranId], references: [id], onDelete: SetNull)
+  pppUsername    String?
+  routerId       Int?
+  router         Router?              @relation(fields: [routerId], references: [id], onDelete: SetNull)
+  dueDate        String?
+  oldProfile     String?
+  newProfile     String?
+  action         AutoIsolirAction     @default(isolate)
+  status         AutoIsolirLogStatus
+  errorMessage   String?              @db.Text
+  executedBy     String               @default("system")
+  dryRun         Boolean              @default(false)
+  batchId        String?
+  created        DateTime             @default(now())
+
+  @@index([userId, created])
+  @@index([status])
+  @@index([batchId])
+}
+
+/// Lock job agar cron tidak double-run.
+model JobLock {
+  name         String   @id
+  lockedAt     DateTime
+  lockedUntil  DateTime
+  owner        String?
+}
+
+/// Pengaturan global sistem (singleton id = 1).
+model AppSettings {
+  id                  Int      @id @default(1)
+  billingGenerateDay  Int      @default(25) @map("billing_generate_day")
+  billingGenerateHour Int      @default(1) @map("billing_generate_hour")
+  updated             DateTime @updatedAt
+
+  @@map("settings")
+}
+
+enum BillingGenerateLogStatus {
+  success
+  failed
+  skipped
+}
+
+/// Log generate tagihan per mitra & periode — cegah duplikat.
+model BillingGenerateLog {
+  id           Int                      @id @default(autoincrement())
+  userId       Int                      @map("client_id")
+  user         User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  period       String
+  status       BillingGenerateLogStatus
+  invoiceCount Int                      @default(0)
+  message      String?                  @db.Text
+  generatedAt  DateTime                 @default(now()) @map("generated_at")
+
+  @@unique([userId, period])
+  @@index([period])
+  @@index([generatedAt])
+  @@map("billing_generate_logs")
+}
+
+/// Audit trail keamanan & operasional (login, pembayaran, isolir, dll.). Tanpa secret.
+model AuditLog {
+  id        BigInt   @id @default(autoincrement())
+  action    String
+  outcome   String
+  userId    Int?
+  username  String?
+  ip        String?
+  userAgent String?  @db.Text
+  endpoint  String?
+  reason    String?
+  meta      Json?
+  created   DateTime @default(now())
+
+  @@index([action, created])
+  @@index([outcome, created])
+  @@index([userId, created])
+  @@index([created])
+  @@map("audit_logs")
+}
+
+/// Petugas lapangan. Akun login opsional untuk yang mencatat tagihan tanpa kertas.
+model Penagih {
+  id          Int      @id @default(autoincrement())
+  ownerUserId Int      @map("owner_user_id")
+  owner       User     @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  userId      Int?     @unique @map("user_id")
+  akun        User?    @relation("PenagihAkun", fields: [userId], references: [id], onDelete: SetNull)
+  nama        String   @db.VarChar(191)
+  nomor       String?  @db.VarChar(32)
+  aktif       Boolean  @default(true)
+  /// Rupiah utuh yang didapat petugas setiap kali mencatat satu pembayaran. 0 = tanpa komisi.
+  komisiNominal Int    @default(0) @map("komisi_nominal")
+  created     DateTime @default(now())
+  updated     DateTime @updatedAt
+  penugasan   PenagihPenugasan[]
+  logDari     PenagihPenugasanLog[] @relation("LogDariPenagih")
+  logKe       PenagihPenugasanLog[] @relation("LogKePenagih")
+  komisi      KomisiPetugasEntri[]
+
+  @@index([ownerUserId, aktif])
+  @@map("penagih")
+}
+
+/// Petugas yang sedang menangani pelanggan. Satu pelanggan satu petugas.
+model PenagihPenugasan {
+  pelangganId Int       @id @map("pelanggan_id")
+  pelanggan   Pelanggan @relation(fields: [pelangganId], references: [id], onDelete: Cascade)
+  penagihId   Int       @map("penagih_id")
+  penagih     Penagih   @relation(fields: [penagihId], references: [id], onDelete: Cascade)
+  ownerUserId Int       @map("owner_user_id")
+  updated     DateTime  @updatedAt
+
+  @@index([penagihId])
+  @@index([ownerUserId])
+  @@map("penagih_penugasan")
+}
+
+/// Jejak penggantian petugas. Baris lama tidak dihapus saat penugasan berubah.
+model PenagihPenugasanLog {
+  id            Int       @id @default(autoincrement())
+  pelangganId   Int       @map("pelanggan_id")
+  pelanggan     Pelanggan @relation(fields: [pelangganId], references: [id], onDelete: Cascade)
+  ownerUserId   Int       @map("owner_user_id")
+  dariPenagihId Int?      @map("dari_penagih_id")
+  dariPenagih   Penagih?  @relation("LogDariPenagih", fields: [dariPenagihId], references: [id], onDelete: SetNull)
+  dariNama      String?   @map("dari_nama") @db.VarChar(191)
+  kePenagihId   Int?      @map("ke_penagih_id")
+  kePenagih     Penagih?  @relation("LogKePenagih", fields: [kePenagihId], references: [id], onDelete: SetNull)
+  keNama        String?   @map("ke_nama") @db.VarChar(191)
+  actorUserId   Int       @map("actor_user_id")
+  created       DateTime  @default(now())
+
+  @@index([pelangganId, created])
+  @@index([ownerUserId, created])
+  @@map("penagih_penugasan_log")
+}
+
+/// Ledger komisi petugas. Saldo = jumlah seluruh nominal. Satu log lunas satu kredit. Satu kredit satu pembatalan.
+model KomisiPetugasEntri {
+  id           Int      @id @default(autoincrement())
+  ownerUserId  Int      @map("owner_user_id")
+  penagihId    Int      @map("penagih_id")
+  penagih      Penagih  @relation(fields: [penagihId], references: [id], onDelete: Restrict)
+  actorUserId  Int      @map("actor_user_id")
+  actor        User     @relation("KomisiActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  pelangganId  Int      @map("pelanggan_id")
+  pelanggan    Pelanggan @relation(fields: [pelangganId], references: [id], onDelete: Restrict)
+  pembayaranId Int      @map("pembayaran_id")
+  pembayaran   Pembayaran @relation(fields: [pembayaranId], references: [id], onDelete: Restrict)
+  logBayarId   Int?     @unique @map("log_bayar_id")
+  logBayar     LogBayar? @relation(fields: [logBayarId], references: [id], onDelete: Restrict)
+  reversesId   Int?     @unique @map("reverses_id")
+  reverses     KomisiPetugasEntri? @relation("KomisiReversal", fields: [reversesId], references: [id], onDelete: Restrict)
+  reversedBy   KomisiPetugasEntri? @relation("KomisiReversal")
+  /// Positif saat komisi masuk, negatif saat dibatalkan. Nilai absolut adalah snapshot tarif.
+  nominal      Int
+  created      DateTime @default(now())
+
+  @@index([penagihId, created])
+  @@index([pembayaranId])
+  @@index([ownerUserId, created])
+  @@map("komisi_petugas_entri")
+}

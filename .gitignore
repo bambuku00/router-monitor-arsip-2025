@@ -1,0 +1,71 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Build / tooling
+dist/
+build/
+*.tsbuildinfo
+
+# Environment & secrets (keep `.env.example` untuk dokumentasi)
+.env
+.env.*
+!.env.example
+
+# Logs & debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# Testing
+coverage/
+.vitest/
+
+# Vercel / Turbopack cache (kalau dipakai)
+.vercel/
+.turbo/
+
+# Prisma (hasil generate lokal; akan dibuat lagi dari schema)
+node_modules/.prisma/
+
+# Upload identitas (di luar public; dilayani lewat /api/uploads/identity/[name])
+/uploads/
+
+# Puppeteer Chrome cache (diunduh via postinstall / npm run puppeteer:install)
+.cache/
+
+# Dump database lokal (jangan commit ke repo / VPS)
+*.sql.gz
+*.sql
+!prisma/migrations/**/*.sql
+
+# IDE & OS
+.idea/
+*.sw?
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Refact "buddy" tool state (jangan commit ke repo)
+.refact/
+
+# Artefak debug invoice & PDF hasil generate (jangan commit)
+# Catatan: dibatasi ke root saja agar PDF sah di subfolder (mis. public/) tetap bisa dilacak.
+/tmp-invoice-debug/
+/*.pdf
+
+# Skrip uji lokal di root. Bisa berisi nomor, PIN, atau perintah yang mengubah data.
+/tmp-*.js
+/tmp-*.json
+
+# Dokumentasi & runbook internal (cukup disimpan lokal, tidak di repo)
+DEPLOY-VPS.md
+DEPLOY_INVOICE_SETTINGS.md
+DEPLOY_PUPPETEER_LINUX.md
+PROMPT_REBUILD_FROM_SCRATCH.md
+SECURITY_AUDIT.md
