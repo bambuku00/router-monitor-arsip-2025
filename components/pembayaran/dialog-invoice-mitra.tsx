@@ -24,9 +24,15 @@ type Props = {
   state: PembayaranMitraState;
   dispatch: React.Dispatch<PembayaranMitraAction>;
   bulan: string;
+  ppnEnabled?: boolean;
 };
 
-export default function DialogInvoiceMitra({ state, dispatch, bulan }: Props) {
+export default function DialogInvoiceMitra({
+  state,
+  dispatch,
+  bulan,
+  ppnEnabled = true,
+}: Props) {
   const show = useMemo(() => {
     return state.modal && state.type === "invoice";
   }, [state]);
@@ -216,28 +222,37 @@ export default function DialogInvoiceMitra({ state, dispatch, bulan }: Props) {
                               })}
                             </td>
                           </tr>
-                          <tr>
-                            <td className="py-3 px-4 font-medium">Pendapatan Bersih (Nett)</td>
-                            <td className="py-3 px-4 text-right font-medium">
-                              {val.pembayaran.bersih.toLocaleString("id-ID", {
-                                style: "currency",
-                                currency: "IDR",
-                                maximumFractionDigits: 0,
-                              })}
-                            </td>
-                          </tr>
-                          <tr>
-                            <td className="py-3 px-4">
-                              {val.ownedByIsp ? "PPN" : "PPN (sesuai profil mitra)"}
-                            </td>
-                            <td className="py-3 px-4 text-right text-slate-700">
-                              + {val.pembayaran.ppn.toLocaleString("id-ID", {
-                                style: "currency",
-                                currency: "IDR",
-                                maximumFractionDigits: 0,
-                              })}
-                            </td>
-                          </tr>
+                          {ppnEnabled ? (
+                            <tr>
+                              <td className="py-3 px-4 font-medium">
+                                Pendapatan Bersih (Nett)
+                              </td>
+                              <td className="py-3 px-4 text-right font-medium">
+                                {val.pembayaran.bersih.toLocaleString("id-ID", {
+                                  style: "currency",
+                                  currency: "IDR",
+                                  maximumFractionDigits: 0,
+                                })}
+                              </td>
+                            </tr>
+                          ) : null}
+                          {ppnEnabled ? (
+                            <tr>
+                              <td className="py-3 px-4">
+                                {val.ownedByIsp
+                                  ? "PPN"
+                                  : "PPN (sesuai profil mitra)"}
+                              </td>
+                              <td className="py-3 px-4 text-right text-slate-700">
+                                +{" "}
+                                {val.pembayaran.ppn.toLocaleString("id-ID", {
+                                  style: "currency",
+                                  currency: "IDR",
+                                  maximumFractionDigits: 0,
+                                })}
+                              </td>
+                            </tr>
+                          ) : null}
                           <tr>
                             <td className="py-3 px-4">BHP</td>
                             <td className="py-3 px-4 text-right text-slate-700">
@@ -273,7 +288,11 @@ export default function DialogInvoiceMitra({ state, dispatch, bulan }: Props) {
                         </tbody>
                         <tfoot className="bg-slate-50 font-bold text-slate-900 border-t border-slate-200">
                           <tr>
-                            <td className="py-4 px-4">Total Tagihan (Kantor + PPN + BHP + USO)</td>
+                            <td className="py-4 px-4">
+                              {ppnEnabled
+                                ? "Total Tagihan (Kantor + PPN + BHP + USO)"
+                                : "Total Tagihan (Kantor + BHP + USO)"}
+                            </td>
                             <td className="py-4 px-4 text-right text-lg">
                               {val.pembayaran.tagihanKantor.toLocaleString("id-ID", {
                                 style: "currency",

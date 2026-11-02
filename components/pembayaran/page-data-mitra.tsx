@@ -436,7 +436,7 @@ export default function PageData() {
               <td rowSpan={2}>User</td>
               <td rowSpan={2}>Tanggal Inv.</td>
               <td rowSpan={2}>Bruto tagihan</td>
-              <td rowSpan={2}>Nett</td>
+              {ppnEnabled ? <td rowSpan={2}>Nett</td> : null}
               {ppnEnabled ? <td rowSpan={2}>PPN</td> : null}
               <td rowSpan={2}>BHP</td>
               <td rowSpan={2}>USO</td>
@@ -575,13 +575,15 @@ export default function PageData() {
                           maximumFractionDigits: 0,
                         })}
                       </td>
-                      <td className="whitespace-pre-wrap px-4 py-2">
-                        {val.pembayaran.bersih.toLocaleString("id-ID", {
-                          style: "currency",
-                          currency: "IDR",
-                          maximumFractionDigits: 0,
-                        })}
-                      </td>
+                      {ppnEnabled ? (
+                        <td className="whitespace-pre-wrap px-4 py-2">
+                          {val.pembayaran.bersih.toLocaleString("id-ID", {
+                            style: "currency",
+                            currency: "IDR",
+                            maximumFractionDigits: 0,
+                          })}
+                        </td>
+                      ) : null}
                       {ppnEnabled ? (
                         <td className="whitespace-pre-wrap px-4 py-2">
                           {formatIdr(val.pembayaran.ppn)}
@@ -634,6 +636,7 @@ export default function PageData() {
         state={pembayaranDialog}
         dispatch={pembayaranDialogDispatch}
         bulan={bulan}
+        ppnEnabled={ppnEnabled}
       />
       <DialogGenerate
         isOpen={showGenerateDialog}
